@@ -1,0 +1,69 @@
+#include "RISCZInstPrinter.h"
+#include "RISCZMCExpr.h"
+#include "llvm/ADT/StringExtras.h"
+#include "llvm/MC/MCExpr.h"
+#include "llvm/MC/MCInst.h"
+#include "llvm/MC/MCInstrInfo.h"
+#include "llvm/MC/MCSymbol.h"
+#include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/raw_ostream.h"
+
+using namespace llvm;
+
+#define DEBUG_TYPE "asm-printer"
+
+#define GET_REGINFO_ENUM
+#include "RISCZGenRegisterInfo.inc"
+
+#define GET_INSTRINFO_ENUM
+#include "RISCZGenInstrsInfo.inc"
+#include "RISCZGenSubtargetInfo.inc"
+
+#include "RISCZGenAsmWriter.inc"
+
+void RISCZInstPrinter::printRegName(raw_ostream &O, MCRegister Reg) {
+  O << getRegisterName(Reg);
+}
+
+void RISCZInstPrinter::printInst(const MCInst *MI, uint64_t Address,
+                                  StringRef Annot, const MCSubtargetInfo &STI,
+                                  raw_ostream &O) {
+  printInstruction(MI, Address, O);
+  printAnnotation(O, Annot);
+}
+
+void RISCZInstPrinter::printOperand(const MCInst *MI, int OpNo, raw_ostream &O) {
+  const MCOperand &MO = MI->getOperand(OpNo);
+
+  if (MO.isReg()) {
+    printRegName(O, MO.getReg());
+    return;
+  }
+
+  if (MO.isImm()) {
+    O << MO.getImm();
+    return;
+  }
+
+  assert(MO.isExpr() && "Unknown operand kind in printOperand");
+  MO.getExpr()->print(O, &MAI);
+}
+
+void RISCZInstPrinter::printBranchOperand(const MCInst *MI, uint64_t Address,
+                                           unsigned OpNo, raw_ostream &O) {
+  const MCOperand &MO = MI->getOperand(OpNo);
+  if (!MO.isImm())
+    return printOperand(MI, OpNo, O);
+
+  if (PrintBranchImmAsAddress) {
+    uint64_t Target = Address + MO.getImm();
+    O << formatHex(static_cast<uint64_t>(Target));
+  } else {
+    O << MO.getImm();
+  }
+}
+
+const char *RISCZInstPrinter::getRegisterName(MCRegister Reg) {
+  return getRegisterName(Reg, riscz::NoRegAltName);
+}

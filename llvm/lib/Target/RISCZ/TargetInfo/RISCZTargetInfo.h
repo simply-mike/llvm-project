@@ -1,9 +1,11 @@
-#pragma once
-
+#ifndef LLVM_LIB_TARGET_RISCZ_TARGETINFO_RISCZTARGETINFO_H
+#define LLVM_LIB_TARGET_RISCZ_TARGETINFO_RISCZTARGETINFO_H
 namespace llvm {
 
 class Target;
 
 Target &getTheRISCZTarget();
 
-} // end namespace llvm
+}
+
+#endif // LLVM_LIB_TARGET_RISCZ_TARGETINFO_RISCZTARGETINFO_H

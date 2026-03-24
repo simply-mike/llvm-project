@@ -9,5 +9,5 @@ Target &llvm::getTheRISCZTarget() {
 
 extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeRISCZTargetInfo() {
   RegisterTarget<Triple::riscz, /*HasJIT=*/false> X(
-        getTheRISCZTarget(), "riscz", "64-bit RISCZ", "RISCZ");
+        getTheRISCZTarget(), "riscz", "64-bit RISC-Z", "RISCZ");
 }
