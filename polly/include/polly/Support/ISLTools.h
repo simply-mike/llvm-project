@@ -14,11 +14,13 @@
 #ifndef POLLY_ISLTOOLS_H
 #define POLLY_ISLTOOLS_H
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Sequence.h"
 #include "llvm/ADT/iterator.h"
 #include "isl/isl-noexceptions.h"
 #include <algorithm>
 #include <cassert>
+#include <cstdint>
 
 /// In debug builds assert that the @p Size is valid, in non-debug builds
 /// disable the mandatory state checking but do not enforce the error checking.
@@ -527,6 +529,34 @@ isl::val getConstant(isl::pw_aff PwAff, bool Max, bool Min);
 /// dimension @p Pos with the type @p Dim has a fixed value, then
 /// return that value. Otherwise return NaN.
 isl::val getConstant(isl::map Map, isl::dim Dim, int Pos);
+
+/// Check whether two statement domains differ only by constant affine offsets
+/// on their per-dimension lower/upper bounds.
+///
+/// The helper is intentionally conservative and currently only accepts
+/// single-piece domains. This matches the canonical loop domains Polly builds
+/// for the STL-style patterns we want to fuse more aggressively.
+///
+/// If @p LowerOffsets/@p UpperOffsets are provided, they receive the constant
+/// differences B-A for each dimension's minimum/maximum respectively.
+bool hasCompatibleConstantDomainOffset(
+    isl::set A, isl::set B,
+    llvm::SmallVectorImpl<int64_t> *LowerOffsets = nullptr,
+    llvm::SmallVectorImpl<int64_t> *UpperOffsets = nullptr);
+
+/// Check whether all points in @p Deltas carry the same constant offset tuple.
+///
+/// If @p Offsets is provided, it receives the constant value for each set
+/// dimension. Returns false if the delta set is empty or any dimension is not a
+/// single integer constant across all pieces.
+bool hasSingleConstantTupleDelta(isl::set Deltas,
+                                 llvm::SmallVectorImpl<int64_t> *Offsets =
+                                     nullptr);
+
+/// Union-set overload for hasSingleConstantTupleDelta(isl::set,...).
+bool hasSingleConstantTupleDelta(isl::union_set Deltas,
+                                 llvm::SmallVectorImpl<int64_t> *Offsets =
+                                     nullptr);
 
 /// Check that @p End is valid and return an iterator from @p Begin to @p End
 ///

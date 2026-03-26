@@ -109,6 +109,12 @@ static cl::opt<bool>
                  cl::desc("Aggressively try to fuse everything"), cl::Hidden,
                  cl::cat(PollyCategory));
 
+cl::opt<bool> polly::PollyForceOffsetFusion(
+    "polly-force-offset-fusion",
+    cl::desc("Add synthetic proximity edges for statement domains whose loop "
+             "bounds differ only by small constant offsets"),
+    cl::Hidden, cl::init(false), cl::cat(PollyCategory));
+
 static cl::opt<std::string> OuterCoincidence(
     "polly-opt-outer-coincidence",
     cl::desc("Try to construct schedules where the outer member of each band "
@@ -612,10 +618,13 @@ bool ScheduleTreeOptimizer::isProfitableSchedule(Scop &S,
   // be profitable.
   auto NewScheduleMap = NewSchedule.get_map();
   auto OldSchedule = S.getSchedule();
+  auto OldScheduleTree = S.getScheduleTree();
   assert(!OldSchedule.is_null() &&
          "Only IslScheduleOptimizer can insert extension nodes "
          "that make Scop::getSchedule() return nullptr.");
   bool changed = !OldSchedule.is_equal(NewScheduleMap);
+  if (!changed)
+    changed = !OldScheduleTree.get_root().is_equal(NewSchedule.get_root());
   return changed;
 }
 
@@ -660,6 +669,76 @@ static void printSchedule(llvm::raw_ostream &OS, const isl::schedule &Schedule,
   isl_printer_free(P);
 }
 #endif
+
+static isl::map makeTupleIdentityRelation(isl::set Domain, isl::id DomainId,
+                                          isl::id RangeId) {
+  isl::map Relation = makeIdentityMap(Domain, /*RestrictDomain=*/true);
+  Relation = Relation.set_tuple_id(isl::dim::in, DomainId);
+  Relation = Relation.set_tuple_id(isl::dim::out, RangeId);
+  return Relation;
+}
+
+static isl::union_map buildOffsetAwareProximity(Scop &S) {
+  isl::union_map Result = isl::union_map::empty(S.getIslCtx());
+  SmallVector<ScopStmt *, 8> Stmts;
+  for (ScopStmt &Stmt : S)
+    Stmts.push_back(&Stmt);
+
+  for (unsigned I = 0; I < Stmts.size(); ++I) {
+    ScopStmt *Src = Stmts[I];
+    isl::set SrcDomain =
+        Src->getLogicalDomain().intersect_params(S.getContext());
+
+    if (unsignedFromIslSize(SrcDomain.tuple_dim()) == 0)
+      continue;
+
+    for (unsigned J = I + 1; J < Stmts.size(); ++J) {
+      ScopStmt *Dst = Stmts[J];
+      isl::set DstDomain =
+          Dst->getLogicalDomain().intersect_params(S.getContext());
+
+      if (unsignedFromIslSize(SrcDomain.tuple_dim()) !=
+          unsignedFromIslSize(DstDomain.tuple_dim()))
+        continue;
+
+      SmallVector<int64_t, 4> LowerOffsets;
+      SmallVector<int64_t, 4> UpperOffsets;
+      if (!hasCompatibleConstantDomainOffset(SrcDomain, DstDomain,
+                                             &LowerOffsets, &UpperOffsets))
+        continue;
+
+      isl::set SharedDomain =
+          SrcDomain.reset_tuple_id().intersect(DstDomain.reset_tuple_id());
+      SharedDomain = SharedDomain.coalesce();
+      if (SharedDomain.is_empty())
+        continue;
+
+      isl::map Bonus = makeTupleIdentityRelation(
+          SharedDomain, Src->getDomainId(), Dst->getDomainId());
+      Result = Result.unite(isl::union_map(Bonus));
+
+      POLLY_DEBUG({
+        dbgs() << "Offset-aware fusion bonus between " << Src->getBaseName()
+               << " and " << Dst->getBaseName() << " with lower offsets [";
+        for (unsigned K = 0; K < LowerOffsets.size(); ++K) {
+          if (K)
+            dbgs() << ", ";
+          dbgs() << LowerOffsets[K];
+        }
+        dbgs() << "] and upper offsets [";
+        for (unsigned K = 0; K < UpperOffsets.size(); ++K) {
+          if (K)
+            dbgs() << ", ";
+          dbgs() << UpperOffsets[K];
+        }
+        dbgs() << "]\n";
+      });
+    }
+  }
+
+  simplify(Result);
+  return Result;
+}
 
 /// Collect statistics for the schedule tree.
 ///
@@ -825,6 +904,13 @@ static void runIslScheduleOptimizer(
              "or 'no'. Falling back to default: 'yes'\n";
     }
 
+    if (PollyForceOffsetFusion) {
+      // TODO: offset-aware fusion for STL patterns
+      isl::union_map OffsetAwareProximity = buildOffsetAwareProximity(S);
+      Proximity = Proximity.unite(OffsetAwareProximity);
+      simplify(Proximity);
+    }
+
     POLLY_DEBUG(dbgs() << "\n\nCompute schedule from: ");
     POLLY_DEBUG(dbgs() << "Domain := " << Domain << ";\n");
     POLLY_DEBUG(dbgs() << "Proximity := " << Proximity << ";\n");
@@ -891,10 +977,18 @@ static void runIslScheduleOptimizer(
   if (Schedule.is_null())
     return;
 
-  if (GreedyFusion) {
+  if (GreedyFusion || PollyForceOffsetFusion) {
     isl::union_map Validity = D.getDependences(
         Dependences::TYPE_RAW | Dependences::TYPE_WAR | Dependences::TYPE_WAW);
-    Schedule = applyGreedyFusion(Schedule, Validity);
+    if (PollyForceOffsetFusion) {
+      isl::schedule PreviousSchedule;
+      do {
+        PreviousSchedule = Schedule;
+        Schedule = applyGreedyFusion(Schedule, Validity);
+      } while (!PreviousSchedule.get_root().is_equal(Schedule.get_root()));
+    } else {
+      Schedule = applyGreedyFusion(Schedule, Validity);
+    }
     assert(!Schedule.is_null());
   }
 

@@ -16,4 +16,15 @@
 #include "llvm/Support/CommandLine.h"
 
 extern llvm::cl::OptionCategory PollyCategory;
+
+namespace polly {
+/// Enable aggressive offset-aware fusion heuristics in the scheduler.
+///
+/// This is intentionally declared in the shared Polly options header because
+/// multiple scheduling components may want to consult the same gate as we grow
+/// the fusion pipeline.
+extern llvm::cl::opt<bool> PollyForceOffsetFusion;
+extern llvm::cl::opt<bool> PollyDetectCompactionPatterns;
+} // namespace polly
+
 #endif

@@ -1,0 +1,80 @@
+; RUN: opt %loadNPMPolly -polly-process-unprofitable -polly-pattern-matching-based-opts=false -polly-postopts=0 -polly-force-offset-fusion=1 "-passes=scop(polly-opt-isl,print<polly-opt-isl>)" -disable-output < %s | FileCheck %s
+; RUN: opt %loadNPMPolly -polly-process-unprofitable -polly-force-offset-fusion=1 "-passes=print<polly-function-scops>" -disable-output < %s | FileCheck %s --check-prefix=LOGICAL
+
+define void @offset_fusion(ptr noalias nonnull %A, ptr noalias nonnull %B, i32 %n) {
+entry:
+  br label %for.fill
+
+for.fill:
+  %i.fill = phi i32 [ 0, %entry ], [ %i.fill.next, %for.fill.inc ]
+  %fill.cond = icmp slt i32 %i.fill, %n
+  br i1 %fill.cond, label %for.fill.body, label %for.transform.preheader
+
+for.fill.body:
+  %fill.idx = getelementptr inbounds i32, ptr %A, i32 %i.fill
+  store i32 0, ptr %fill.idx, align 4
+  br label %for.fill.inc
+
+for.fill.inc:
+  %i.fill.next = add nuw nsw i32 %i.fill, 1
+  br label %for.fill
+
+for.transform.preheader:
+  br label %for.transform
+
+for.transform:
+  %i.transform = phi i32 [ 1, %for.transform.preheader ], [ %i.transform.next, %for.transform.inc ]
+  %transform.cond = icmp slt i32 %i.transform, %n
+  br i1 %transform.cond, label %for.transform.body, label %for.copy.preheader
+
+for.transform.body:
+  %transform.idx = getelementptr inbounds i32, ptr %A, i32 %i.transform
+  %transform.old = load i32, ptr %transform.idx, align 4
+  %transform.mul = shl nsw i32 %transform.old, 1
+  %transform.add = add nsw i32 %transform.mul, 1
+  store i32 %transform.add, ptr %transform.idx, align 4
+  br label %for.transform.inc
+
+for.transform.inc:
+  %i.transform.next = add nuw nsw i32 %i.transform, 1
+  br label %for.transform
+
+for.copy.preheader:
+  %n.minus.1 = add nsw i32 %n, -1
+  br label %for.copy
+
+for.copy:
+  %i.copy = phi i32 [ 0, %for.copy.preheader ], [ %i.copy.next, %for.copy.inc ]
+  %copy.cond = icmp slt i32 %i.copy, %n.minus.1
+  br i1 %copy.cond, label %for.copy.body, label %exit
+
+for.copy.body:
+  %copy.src = getelementptr inbounds i32, ptr %A, i32 %i.copy
+  %copy.val = load i32, ptr %copy.src, align 4
+  %copy.dst = getelementptr inbounds i32, ptr %B, i32 %i.copy
+  store i32 %copy.val, ptr %copy.dst, align 4
+  br label %for.copy.inc
+
+for.copy.inc:
+  %i.copy.next = add nuw nsw i32 %i.copy, 1
+  br label %for.copy
+
+exit:
+  ret void
+}
+
+; CHECK:      Calculated schedule:
+; CHECK-NEXT: domain: "[p_0] -> { Stmt9[i0] : 0 <= i0 <= -2 + p_0; Stmt1[i0] : 0 <= i0 < p_0; Stmt5[i0] : 0 <= i0 <= -2 + p_0 }"
+; CHECK-NEXT: child:
+; CHECK-NEXT:   schedule: "[p_0] -> [{ Stmt1[i0] -> [(i0)]; Stmt9[i0] -> [(i0)]; Stmt5[i0] -> [(1 + i0)] }]"
+; CHECK-NEXT:   child:
+; CHECK-NEXT:     sequence:
+; CHECK-NEXT:     - filter: "[p_0] -> { Stmt1[i0] }"
+; CHECK-NEXT:     - filter: "[p_0] -> { Stmt5[i0] }"
+; CHECK-NEXT:     - filter: "[p_0] -> { Stmt9[i0] }"
+
+; LOGICAL:      Stmt5
+; LOGICAL-NEXT:            Domain :=
+; LOGICAL-NEXT:                [p_0] -> { Stmt5[i0] : 0 <= i0 <= -2 + p_0 };
+; LOGICAL-NEXT:            Logical Domain :=
+; LOGICAL-NEXT:                [p_0] -> { Stmt5[i0] : 0 < i0 < p_0 };

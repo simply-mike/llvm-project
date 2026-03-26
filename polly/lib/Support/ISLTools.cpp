@@ -13,8 +13,10 @@
 
 #include "polly/Support/ISLTools.h"
 #include "polly/Support/GICHelper.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cassert>
+#include <cstdint>
 #include <vector>
 
 using namespace polly;
@@ -592,6 +594,136 @@ isl::val polly::getConstant(isl::pw_aff PwAff, bool Max, bool Min) {
     return {};
 
   return Result;
+}
+
+static bool getConstantPwAffDifference(isl::pw_aff A, isl::pw_aff B,
+                                       int64_t &Offset) {
+  isl::val Difference = getConstant(B.sub(A), /*Max=*/false, /*Min=*/false);
+  if (Difference.is_null() || Difference.is_nan() || !Difference.is_int())
+    return false;
+
+  Offset = Difference.get_num_si();
+  return true;
+}
+
+bool polly::hasCompatibleConstantDomainOffset(
+    isl::set A, isl::set B, llvm::SmallVectorImpl<int64_t> *LowerOffsets,
+    llvm::SmallVectorImpl<int64_t> *UpperOffsets) {
+  if (A.is_null() || B.is_null())
+    return false;
+
+  A = A.reset_tuple_id().coalesce();
+  B = B.reset_tuple_id().coalesce();
+
+  if (unsignedFromIslSize(A.tuple_dim()) != unsignedFromIslSize(B.tuple_dim()))
+    return false;
+
+  if (unsignedFromIslSize(A.n_basic_set()) != 1 ||
+      unsignedFromIslSize(B.n_basic_set()) != 1)
+    return false;
+
+  if (A.is_equal(B))
+    return false;
+
+  isl::set Overlap = A.intersect(B).coalesce();
+  if (Overlap.is_empty())
+    return false;
+
+  // TODO: offset-aware fusion for STL patterns
+  // Reject obviously unrelated domains first and only then look at the affine
+  // bound deltas. For the targeted STL loops the non-overlapping remainder is
+  // expected to be a small boundary slice.
+  isl::set OnlyA = A.subtract(Overlap).coalesce();
+  isl::set OnlyB = B.subtract(Overlap).coalesce();
+  if (OnlyA.is_empty() && OnlyB.is_empty())
+    return false;
+
+  unsigned NumDims = unsignedFromIslSize(A.tuple_dim());
+  llvm::SmallVector<int64_t, 4> LocalLowerOffsets;
+  llvm::SmallVector<int64_t, 4> LocalUpperOffsets;
+  bool HasNonZeroOffset = false;
+
+  for (unsigned Dim = 0; Dim < NumDims; ++Dim) {
+    int64_t LowerOffset = 0;
+    int64_t UpperOffset = 0;
+    if (!getConstantPwAffDifference(A.dim_min(Dim), B.dim_min(Dim),
+                                    LowerOffset))
+      return false;
+    if (!getConstantPwAffDifference(A.dim_max(Dim), B.dim_max(Dim),
+                                    UpperOffset))
+      return false;
+
+    LocalLowerOffsets.push_back(LowerOffset);
+    LocalUpperOffsets.push_back(UpperOffset);
+    HasNonZeroOffset |= LowerOffset != 0 || UpperOffset != 0;
+  }
+
+  if (!HasNonZeroOffset)
+    return false;
+
+  if (LowerOffsets)
+    LowerOffsets->append(LocalLowerOffsets.begin(), LocalLowerOffsets.end());
+  if (UpperOffsets)
+    UpperOffsets->append(LocalUpperOffsets.begin(), LocalUpperOffsets.end());
+  return true;
+}
+
+bool polly::hasSingleConstantTupleDelta(
+    isl::set Deltas, llvm::SmallVectorImpl<int64_t> *Offsets) {
+  if (Deltas.is_null() || Deltas.is_empty())
+    return false;
+
+  unsigned NumDims = unsignedFromIslSize(Deltas.tuple_dim());
+  llvm::SmallVector<int64_t, 4> LocalOffsets;
+  LocalOffsets.reserve(NumDims);
+
+  for (unsigned Dim = 0; Dim < NumDims; ++Dim) {
+    isl::val MinVal = getConstant(Deltas.dim_min(Dim), /*Max=*/false,
+                                  /*Min=*/true);
+    isl::val MaxVal =
+        getConstant(Deltas.dim_max(Dim), /*Max=*/true, /*Min=*/false);
+    if (MinVal.is_null() || MaxVal.is_null() || MinVal.is_nan() ||
+        MaxVal.is_nan() || !MinVal.is_int() || !MaxVal.is_int() ||
+        !MinVal.eq(MaxVal))
+      return false;
+
+    LocalOffsets.push_back(MinVal.get_num_si());
+  }
+
+  if (Offsets)
+    Offsets->append(LocalOffsets.begin(), LocalOffsets.end());
+  return true;
+}
+
+bool polly::hasSingleConstantTupleDelta(
+    isl::union_set Deltas, llvm::SmallVectorImpl<int64_t> *Offsets) {
+  if (Deltas.is_null() || Deltas.is_empty())
+    return false;
+
+  llvm::SmallVector<int64_t, 4> CommonOffsets;
+  bool Initialized = false;
+  isl::stat Stat = Deltas.foreach_set([&](isl::set Set) -> isl::stat {
+    llvm::SmallVector<int64_t, 4> LocalOffsets;
+    if (!hasSingleConstantTupleDelta(Set, &LocalOffsets))
+      return isl::stat::error();
+
+    if (!Initialized) {
+      CommonOffsets = LocalOffsets;
+      Initialized = true;
+      return isl::stat::ok();
+    }
+
+    if (CommonOffsets == LocalOffsets)
+      return isl::stat::ok();
+    return isl::stat::error();
+  });
+
+  if (Stat.is_error() || !Initialized)
+    return false;
+
+  if (Offsets)
+    Offsets->append(CommonOffsets.begin(), CommonOffsets.end());
+  return true;
 }
 
 llvm::iota_range<unsigned> polly::rangeIslSize(unsigned Begin, isl::size End) {

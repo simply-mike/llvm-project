@@ -11,6 +11,8 @@
 //===----------------------------------------------------------------------===//
 
 #include "polly/ScheduleTreeTransform.h"
+#include "polly/Options.h"
+#include "polly/ScopInfo.h"
 #include "polly/Support/GICHelper.h"
 #include "polly/Support/ISLTools.h"
 #include "polly/Support/ScopHelper.h"
@@ -20,6 +22,7 @@
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/Transforms/Utils/UnrollLoop.h"
+#include <optional>
 
 #include "polly/Support/PollyDebug.h"
 #define DEBUG_TYPE "polly-opt-isl"
@@ -682,6 +685,80 @@ static void collectPotentiallyFusableBands(
   }
 }
 
+static isl::union_set getNodeStmtDomain(isl::schedule_node Node) {
+  if (Node.isa<isl::schedule_node_filter>())
+    return Node.as<isl::schedule_node_filter>().get_filter();
+  return Node.get_domain();
+}
+
+static void collectNodeStmts(isl::schedule_node Node,
+                             SmallVectorImpl<ScopStmt *> &Stmts) {
+  isl::union_set Domain = getNodeStmtDomain(Node);
+  Domain.foreach_set([&](isl::set Set) -> isl::stat {
+    isl::id Id = Set.get_tuple_id();
+    auto *Stmt = static_cast<ScopStmt *>(Id.get_user());
+    if (Stmt)
+      Stmts.push_back(Stmt);
+    return isl::stat::ok();
+  });
+}
+
+static bool isSingleZeroDimStmtNode(isl::schedule_node Node, ScopStmt *&Stmt) {
+  SmallVector<ScopStmt *, 4> Stmts;
+  collectNodeStmts(Node, Stmts);
+  if (Stmts.size() != 1)
+    return false;
+  if (unsignedFromIslSize(Stmts.front()->getDomain().tuple_dim()) != 0)
+    return false;
+  Stmt = Stmts.front();
+  return true;
+}
+
+static bool isHoistableZeroDimStmtNode(isl::schedule_node InitNode) {
+  ScopStmt *InitStmt = nullptr;
+  return isSingleZeroDimStmtNode(InitNode, InitStmt);
+}
+
+static bool canMoveSequenceNodeBefore(isl::schedule_node EarlierNode,
+                                      isl::schedule_node LaterNode,
+                                      const isl::union_map &Deps) {
+  isl::union_map Violations =
+      Deps.intersect_domain(getNodeStmtDomain(EarlierNode))
+          .intersect_range(getNodeStmtDomain(LaterNode));
+  return Violations.is_empty();
+}
+
+static void hoistMovableZeroDimStmts(
+    SmallVectorImpl<isl::schedule_node> &Children, const isl::union_map &Deps) {
+  for (int InitIdx = 0, End = Children.size(); InitIdx < End; ++InitIdx) {
+    if (!isHoistableZeroDimStmtNode(Children[InitIdx]))
+      continue;
+
+    POLLY_DEBUG(dbgs() << "Considering zero-dimensional statement for hoisting "
+                       << "before greedy fusion\n");
+
+    int NewPos = InitIdx;
+    while (NewPos > 0 &&
+           canMoveSequenceNodeBefore(Children[NewPos - 1], Children[InitIdx],
+                                     Deps))
+      --NewPos;
+
+    if (NewPos == InitIdx)
+      continue;
+
+    POLLY_DEBUG({
+      dbgs() << "Hoisting zero-dimensional statement across "
+             << (InitIdx - NewPos)
+             << " sequence nodes before greedy fusion\n";
+    });
+
+    isl::schedule_node InitNode = Children[InitIdx];
+    for (int Pos = InitIdx; Pos > NewPos; --Pos)
+      Children[Pos] = Children[Pos - 1];
+    Children[NewPos] = InitNode;
+  }
+}
+
 /// Remove dependencies that are resolved by @p PartSched. That is, remove
 /// everything that we already know is executed in-order.
 static isl::union_map remainingDepsFromPartialSchedule(isl::union_map PartSched,
@@ -730,17 +807,10 @@ static isl::union_map remainigDepsFromSequence(ArrayRef<isl::union_set> Domains,
 
 /// Determine whether the outermost loop of to bands can be fused while
 /// respecting validity dependencies.
-static bool canFuseOutermost(const isl::schedule_node_band &LHS,
-                             const isl::schedule_node_band &RHS,
+static bool canFuseOutermost(const isl::union_map &LHSPartSched,
+                             const isl::union_map &RHSPartSched,
                              const isl::union_map &Deps) {
   // { LHSDomain[] -> Scatter[] }
-  isl::union_map LHSPartSched =
-      LHS.get_partial_schedule().get_at(0).as_union_map();
-
-  // { Domain[] -> Scatter[] }
-  isl::union_map RHSPartSched =
-      RHS.get_partial_schedule().get_at(0).as_union_map();
-
   // Dependencies that are already resolved because LHS executes before RHS, but
   // will not be anymore after fusion. { DefDomain[] -> UseDomain[] }
   isl::union_map OrderedBySequence =
@@ -767,11 +837,76 @@ static bool canFuseOutermost(const isl::schedule_node_band &LHS,
   return WithBefore.is_empty();
 }
 
+static isl::map makeScheduleShift(isl::space ScatterSpace, int64_t Shift) {
+  isl::space MapSpace = ScatterSpace.map_from_set();
+  isl::map ShiftMap = isl::map::universe(MapSpace);
+  isl::constraint C =
+      isl::constraint::alloc_equality(isl::local_space(MapSpace));
+  C = C.set_constant_si(Shift);
+  C = C.set_coefficient_si(isl::dim::in, 0, 1);
+  C = C.set_coefficient_si(isl::dim::out, 0, -1);
+  return ShiftMap.add_constraint(C);
+}
+
+static std::optional<int64_t>
+getConstantFuseShift(const isl::union_map &LHSPartSched,
+                     const isl::union_map &RHSPartSched,
+                     const isl::union_map &Deps) {
+  isl::union_map CrossDeps =
+      Deps.intersect_domain(LHSPartSched.domain()).intersect_range(
+          RHSPartSched.domain());
+  if (CrossDeps.is_empty())
+    return std::nullopt;
+
+  isl::union_map SchedDeps =
+      LHSPartSched.reverse().apply_range(CrossDeps).apply_range(RHSPartSched);
+  if (getNumScatterDims(SchedDeps) != 1)
+    return std::nullopt;
+
+  llvm::SmallVector<int64_t, 1> Offsets;
+  if (!hasSingleConstantTupleDelta(SchedDeps.deltas(), &Offsets) ||
+      Offsets.size() != 1)
+    return std::nullopt;
+
+  return -Offsets.front();
+}
+
+static isl::union_map shiftOuterSchedule(isl::union_map PartSched,
+                                         int64_t Shift) {
+  if (Shift == 0)
+    return PartSched;
+
+  isl::space ScatterSpace = PartSched.get_space().params().add_unnamed_tuple(1);
+  isl::map ShiftMap = makeScheduleShift(ScatterSpace, Shift);
+  return PartSched.apply_range(isl::union_map(ShiftMap));
+}
+
 /// Fuse @p LHS and @p RHS if possible while preserving validity dependenvies.
 static isl::schedule tryGreedyFuse(isl::schedule_node_band LHS,
                                    isl::schedule_node_band RHS,
                                    const isl::union_map &Deps) {
-  if (!canFuseOutermost(LHS, RHS, Deps))
+  // The partial schedule of the bands outermost loop that we need to combine
+  // for the fusion.
+  isl::union_map LHSPartOuterSched =
+      LHS.get_partial_schedule().get_at(0).as_union_map();
+  isl::union_map RHSPartOuterSched =
+      RHS.get_partial_schedule().get_at(0).as_union_map();
+
+  int64_t AppliedShift = 0;
+  bool CanFuse = canFuseOutermost(LHSPartOuterSched, RHSPartOuterSched, Deps);
+  if (!CanFuse && PollyForceOffsetFusion) {
+    // TODO: offset-aware fusion for STL patterns
+    if (std::optional<int64_t> Shift =
+            getConstantFuseShift(LHSPartOuterSched, RHSPartOuterSched, Deps)) {
+      isl::union_map ShiftedRHS = shiftOuterSchedule(RHSPartOuterSched, *Shift);
+      if (canFuseOutermost(LHSPartOuterSched, ShiftedRHS, Deps)) {
+        RHSPartOuterSched = ShiftedRHS;
+        AppliedShift = *Shift;
+        CanFuse = true;
+      }
+    }
+  }
+  if (!CanFuse)
     return {};
 
   POLLY_DEBUG({
@@ -779,13 +914,11 @@ static isl::schedule tryGreedyFuse(isl::schedule_node_band LHS,
     dumpIslObj(LHS, dbgs());
     dbgs() << "and\n";
     dumpIslObj(RHS, dbgs());
+    if (AppliedShift != 0)
+      dbgs() << "Applying offset-aware outer schedule shift " << AppliedShift
+             << " to RHS before fusion\n";
     dbgs() << "\n";
   });
-
-  // The partial schedule of the bands outermost loop that we need to combine
-  // for the fusion.
-  isl::union_pw_aff LHSPartOuterSched = LHS.get_partial_schedule().get_at(0);
-  isl::union_pw_aff RHSPartOuterSched = RHS.get_partial_schedule().get_at(0);
 
   // Isolate band bodies as roots of their own schedule trees.
   IdentityRewriter Rewriter;
@@ -808,7 +941,7 @@ static isl::schedule tryGreedyFuse(isl::schedule_node_band LHS,
   // Combine the partial schedules of both loops to a new one. Instances with
   // the same scatter value are put together.
   isl::union_map NewCommonPartialSched =
-      LHSPartOuterSched.as_union_map().unite(RHSPartOuterSched.as_union_map());
+      LHSPartOuterSched.unite(RHSPartOuterSched);
   isl::schedule NewCommonSchedule = NewCommonBody.insert_partial_schedule(
       NewCommonPartialSched.as_multi_union_pw_aff());
 
@@ -873,16 +1006,21 @@ public:
   isl::schedule visitSequence(isl::schedule_node_sequence Sequence,
                               isl::union_map Deps) {
     int NumChildren = isl_schedule_node_n_children(Sequence.get());
+    SmallVector<isl::schedule_node, 8> OrderedChildren;
+    OrderedChildren.reserve(NumChildren);
+    for (auto i : seq<int>(0, NumChildren))
+      OrderedChildren.push_back(Sequence.child(i));
+
+    if (PollyForceOffsetFusion)
+      hoistMovableZeroDimStmts(OrderedChildren, Deps);
 
     // List of fusion candidates. The first element is the fusion candidate, the
     // second is candidate's ancestor that is the sequence's direct child. It is
     // preferable to use the direct child if not if its non-direct children is
     // fused to preserve its structure such as mark nodes.
     SmallVector<std::pair<isl::schedule_node, isl::schedule_node>> Bands;
-    for (auto i : seq<int>(0, NumChildren)) {
-      isl::schedule_node Child = Sequence.child(i);
+    for (isl::schedule_node Child : OrderedChildren)
       collectPotentiallyFusableBands(Child, Bands, Child);
-    }
 
     // Direct children that had at least one of its descendants fused.
     SmallDenseSet<isl_schedule_node *, 4> ChangedDirectChildren;
@@ -916,8 +1054,8 @@ public:
     // output.
     SmallVector<isl::union_set> SubDomains;
     SubDomains.reserve(NumChildren);
-    for (int i = 0; i < NumChildren; i += 1)
-      SubDomains.push_back(Sequence.child(i).domain());
+    for (isl::schedule_node Child : OrderedChildren)
+      SubDomains.push_back(Child.domain());
     auto SubRemainingDeps = remainigDepsFromSequence(SubDomains, Deps);
 
     // We may iterate over direct children multiple times, be sure to add each
