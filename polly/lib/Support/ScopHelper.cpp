@@ -18,6 +18,8 @@
 #include "llvm/Analysis/RegionInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/LoopUtils.h"
 #include "llvm/Transforms/Utils/ScalarEvolutionExpander.h"
@@ -34,6 +36,288 @@ static cl::list<std::string> DebugFunctions(
              "side-effects are unknown. This can be used to do debug output in "
              "Polly-transformed code."),
     cl::Hidden, cl::CommaSeparated, cl::cat(PollyCategory));
+
+namespace {
+static Value *getLoopInvariantIncomingValue(PHINode *Phi, const Loop *L) {
+  Value *Incoming = nullptr;
+  for (unsigned I = 0, E = Phi->getNumIncomingValues(); I != E; ++I) {
+    BasicBlock *IncomingBB = Phi->getIncomingBlock(I);
+    if (L->contains(IncomingBB))
+      continue;
+    if (Incoming)
+      return nullptr;
+    Incoming = Phi->getIncomingValue(I);
+  }
+  return Incoming;
+}
+
+static PHINode *getHeaderPhi(Value *V, const Loop *L) {
+  auto *Phi = dyn_cast<PHINode>(V);
+  if (!Phi || Phi->getParent() != L->getHeader())
+    return nullptr;
+  return Phi;
+}
+
+static bool getConstantGEPIncrement(Value *V, PHINode *&BasePhi,
+                                    int64_t &ByteStep) {
+  auto *GEP = dyn_cast<GetElementPtrInst>(V);
+  if (!GEP)
+    return false;
+
+  const DataLayout &DL = GEP->getModule()->getDataLayout();
+  APInt Offset(DL.getIndexTypeSizeInBits(GEP->getType()), 0, /*isSigned=*/true);
+  if (!GEP->accumulateConstantOffset(DL, Offset) || !Offset.isSignedIntN(64))
+    return false;
+
+  BasePhi = dyn_cast<PHINode>(GEP->getPointerOperand());
+  if (!BasePhi)
+    return false;
+
+  ByteStep = Offset.getSExtValue();
+  return true;
+}
+
+static const SCEV *getPointerSpanInBytes(Value *Start, Value *End,
+                                         ScalarEvolution &SE) {
+  const SCEV *StartS = SE.getSCEV(Start);
+  const SCEV *EndS = SE.getSCEV(End);
+  Type *PtrIntTy =
+      SE.getEffectiveSCEVType(PointerType::getUnqual(SE.getContext()));
+  const SCEV *StartInt = SE.getPtrToIntExpr(StartS, PtrIntTy);
+  const SCEV *EndInt = SE.getPtrToIntExpr(EndS, PtrIntTy);
+  return SE.getMinusSCEV(EndInt, StartInt);
+}
+
+static const SCEV *getLoopSourceSpanBytes(Loop *L, ScalarEvolution &SE) {
+  BasicBlock *Latch = L->getLoopLatch();
+  if (!Latch)
+    return SE.getCouldNotCompute();
+
+  auto *BI = dyn_cast<BranchInst>(Latch->getTerminator());
+  if (!BI || !BI->isConditional())
+    return SE.getCouldNotCompute();
+
+  auto *Cmp = dyn_cast<ICmpInst>(BI->getCondition());
+  if (!Cmp || !Cmp->isEquality())
+    return SE.getCouldNotCompute();
+
+  auto TryOperandOrder = [&](Value *NextPtr, Value *EndPtr) -> const SCEV * {
+    PHINode *SrcPhi = nullptr;
+    int64_t StepBytes = 0;
+    if (!getConstantGEPIncrement(NextPtr, SrcPhi, StepBytes) || StepBytes <= 0)
+      return SE.getCouldNotCompute();
+    if (SrcPhi->getParent() != L->getHeader())
+      return SE.getCouldNotCompute();
+
+    Value *Start = getLoopInvariantIncomingValue(SrcPhi, L);
+    if (!Start)
+      return SE.getCouldNotCompute();
+
+    const SCEV *EndS = SE.getSCEVAtScope(EndPtr, L);
+    if (!SE.isLoopInvariant(EndS, L))
+      return SE.getCouldNotCompute();
+
+    return getPointerSpanInBytes(Start, EndPtr, SE);
+  };
+
+  const SCEV *Span = TryOperandOrder(Cmp->getOperand(0), Cmp->getOperand(1));
+  if (!isa<SCEVCouldNotCompute>(Span))
+    return Span;
+  return TryOperandOrder(Cmp->getOperand(1), Cmp->getOperand(0));
+}
+
+static Value *resolveNonNullPointerPhiIncoming(Value *V, const Instruction *CtxI,
+                                               ScalarEvolution &SE) {
+  auto *Phi = dyn_cast<PHINode>(V);
+  if (!Phi || !V->getType()->isPointerTy() || Phi->getNumIncomingValues() != 2)
+    return V;
+
+  Value *NonNullIncoming = nullptr;
+  bool HasNullIncoming = false;
+  for (Value *Incoming : Phi->incoming_values()) {
+    if (isa<ConstantPointerNull>(Incoming)) {
+      HasNullIncoming = true;
+      continue;
+    }
+    if (NonNullIncoming)
+      return V;
+    NonNullIncoming = Incoming;
+  }
+
+  if (!HasNullIncoming || !NonNullIncoming)
+    return V;
+
+  Type *PtrIntTy = SE.getEffectiveSCEVType(V->getType());
+  const SCEV *PointerSCEV = SE.getPtrToIntExpr(SE.getSCEV(V), PtrIntTy);
+  const SCEV *Zero = SE.getZero(PtrIntTy);
+  if (!SE.isKnownPredicateAt(ICmpInst::ICMP_NE, PointerSCEV, Zero, CtxI))
+    return V;
+
+  return NonNullIncoming;
+}
+
+static Value *findInvariantPointerBaseImpl(Value *V, const Instruction *CtxI,
+                                           Loop *L, ScalarEvolution &SE,
+                                           SmallPtrSetImpl<Value *> &Visited) {
+  if (!V || !V->getType()->isPointerTy() || !Visited.insert(V).second)
+    return nullptr;
+
+  if (auto *Phi = getHeaderPhi(V, L)) {
+    Value *Incoming = getLoopInvariantIncomingValue(Phi, L);
+    if (!Incoming)
+      return nullptr;
+
+    Incoming = resolveNonNullPointerPhiIncoming(Incoming, CtxI, SE);
+    if (Incoming == V)
+      return nullptr;
+
+    if (Value *Recovered = findInvariantPointerBaseImpl(Incoming, CtxI, L, SE,
+                                                        Visited))
+      return Recovered;
+
+    return Incoming;
+  }
+
+  return nullptr;
+}
+} // namespace
+
+bool polly::matchNoGrowBackInserterCheck(ICmpInst &ICmp, Loop *L,
+                                         ScalarEvolution &SE,
+                                         const SCEV *&RemainingBytes,
+                                         const SCEV *&SourceSpanBytes) {
+  RemainingBytes = nullptr;
+  SourceSpanBytes = nullptr;
+
+  if (!L)
+    return false;
+
+  Value *Current = nullptr;
+  Value *Capacity = nullptr;
+  switch (ICmp.getPredicate()) {
+  case ICmpInst::ICMP_ULT:
+  case ICmpInst::ICMP_ULE:
+    Current = ICmp.getOperand(0);
+    Capacity = ICmp.getOperand(1);
+    break;
+  case ICmpInst::ICMP_UGT:
+  case ICmpInst::ICMP_UGE:
+    Current = ICmp.getOperand(1);
+    Capacity = ICmp.getOperand(0);
+    break;
+  default:
+    return false;
+  }
+
+  if (!Current->getType()->isPointerTy() || !Capacity->getType()->isPointerTy())
+    return false;
+
+  PHINode *CurrentPhi = getHeaderPhi(Current, L);
+  PHINode *CapacityPhi = getHeaderPhi(Capacity, L);
+  if (!CurrentPhi || !CapacityPhi)
+    return false;
+
+  Value *InitialCurrent = getLoopInvariantIncomingValue(CurrentPhi, L);
+  Value *InitialCapacity = getLoopInvariantIncomingValue(CapacityPhi, L);
+  if (!InitialCurrent || !InitialCapacity)
+    return false;
+  InitialCurrent = resolveNonNullPointerPhiIncoming(InitialCurrent, &ICmp, SE);
+  InitialCapacity = resolveNonNullPointerPhiIncoming(InitialCapacity, &ICmp, SE);
+
+  RemainingBytes = getPointerSpanInBytes(InitialCurrent, InitialCapacity, SE);
+  SourceSpanBytes = getLoopSourceSpanBytes(L, SE);
+  if (isa<SCEVCouldNotCompute>(RemainingBytes) ||
+      isa<SCEVCouldNotCompute>(SourceSpanBytes))
+    return false;
+
+  return true;
+}
+
+bool polly::matchPointerIteratorLoopTripCount(ICmpInst &ICmp, Loop *L,
+                                              ScalarEvolution &SE,
+                                              const SCEV **BackedgeTakenCount) {
+  if (BackedgeTakenCount)
+    *BackedgeTakenCount = nullptr;
+
+  if (!L || !ICmp.isEquality())
+    return false;
+
+  BasicBlock *Latch = L->getLoopLatch();
+  if (!Latch || ICmp.getParent() != Latch)
+    return false;
+
+  auto TryOperandOrder = [&](Value *NextPtr, Value *EndPtr) -> const SCEV * {
+    PHINode *SrcPhi = nullptr;
+    int64_t StepBytes = 0;
+    if (!getConstantGEPIncrement(NextPtr, SrcPhi, StepBytes) || StepBytes <= 0)
+      return SE.getCouldNotCompute();
+    if (SrcPhi->getParent() != L->getHeader())
+      return SE.getCouldNotCompute();
+
+    Value *Start = getLoopInvariantIncomingValue(SrcPhi, L);
+    if (!Start)
+      return SE.getCouldNotCompute();
+
+    const SCEV *EndS = SE.getSCEVAtScope(EndPtr, L);
+    if (!SE.isLoopInvariant(EndS, L))
+      return SE.getCouldNotCompute();
+
+    const SCEV *SpanBytes = getPointerSpanInBytes(Start, EndPtr, SE);
+    if (isa<SCEVCouldNotCompute>(SpanBytes))
+      return SpanBytes;
+
+    const SCEV *Step = SE.getConstant(SpanBytes->getType(), StepBytes);
+    const SCEV *SpanMinusStep = SE.getMinusSCEV(SpanBytes, Step);
+    if (isa<SCEVCouldNotCompute>(SpanMinusStep))
+      return SpanMinusStep;
+
+    return SE.getUDivExpr(SpanMinusStep, Step);
+  };
+
+  const SCEV *Count = TryOperandOrder(ICmp.getOperand(0), ICmp.getOperand(1));
+  if (isa<SCEVCouldNotCompute>(Count))
+    Count = TryOperandOrder(ICmp.getOperand(1), ICmp.getOperand(0));
+  if (isa<SCEVCouldNotCompute>(Count))
+    return false;
+
+  if (BackedgeTakenCount)
+    *BackedgeTakenCount = Count;
+  return true;
+}
+
+Value *polly::findInvariantPointerBase(Value *V, const Instruction *CtxI,
+                                       Loop *L, ScalarEvolution &SE) {
+  if (!L)
+    return nullptr;
+
+  SmallPtrSet<Value *, 8> Visited;
+  return findInvariantPointerBaseImpl(V, CtxI, L, SE, Visited);
+}
+
+bool polly::isKnownNoGrowBackInserterBranch(ICmpInst &ICmp, Loop *L,
+                                            ScalarEvolution &SE) {
+  const SCEV *RemainingBytes = nullptr;
+  const SCEV *SourceSpanBytes = nullptr;
+  if (!matchNoGrowBackInserterCheck(ICmp, L, SE, RemainingBytes,
+                                    SourceSpanBytes))
+    return false;
+
+  // TODO: offset-aware fusion for STL patterns
+  // If the initially reserved tail covers the full source traversal, the
+  // vector growth path is unreachable and we can keep only the append fast
+  // path inside the affine region.
+  bool KnownNoGrow =
+      SE.isKnownPredicate(ICmpInst::ICMP_UGE, RemainingBytes, SourceSpanBytes);
+  if (!KnownNoGrow)
+    KnownNoGrow = SE.isKnownPredicateAt(ICmpInst::ICMP_UGE, RemainingBytes,
+                                        SourceSpanBytes, &ICmp);
+
+  LLVM_DEBUG(if (KnownNoGrow) {
+    dbgs() << "Recognized no-growth back_inserter branch in "
+           << ICmp.getFunction()->getName() << ": " << ICmp << "\n";
+  });
+  return KnownNoGrow;
+}
 
 // Ensures that there is just one predecessor to the entry node from outside the
 // region.

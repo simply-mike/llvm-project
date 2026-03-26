@@ -38,6 +38,7 @@
 #include "llvm/Analysis/RegionIterator.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
+#include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/IR/DebugLoc.h"
@@ -69,6 +70,11 @@ STATISTIC(InfeasibleScops,
           "Number of SCoPs with statically infeasible context.");
 
 bool polly::ModelReadOnlyScalars;
+cl::opt<bool> polly::PollyDetectCompactionPatterns(
+    "polly-detect-compaction-patterns",
+    cl::desc("Detect copy_if/back_inserter-like compaction statements after "
+             "lowering to non-affine output writes"),
+    cl::Hidden, cl::init(false), cl::cat(PollyCategory));
 
 // The maximal number of dimensions we allow during invariant load construction.
 // More complex access ranges will result in very high compile time and are also
@@ -486,50 +492,62 @@ bool ScopBuilder::buildConditionSets(
     assert(ICond &&
            "Condition of exiting branch was neither constant nor ICmp!");
 
-    Region &R = scop->getRegion();
+    if (isKnownNoGrowBackInserterBranch(*ICond, L, SE)) {
+      ConsequenceCondSet = isl_set_universe(isl_set_get_space(Domain));
+    } else {
+      Region &R = scop->getRegion();
 
-    isl_pw_aff *LHS, *RHS;
-    // For unsigned comparisons we assumed the signed bit of neither operand
-    // to be set. The comparison is equal to a signed comparison under this
-    // assumption.
-    bool NonNeg = ICond->isUnsigned();
-    const SCEV *LeftOperand = SE.getSCEVAtScope(ICond->getOperand(0), L),
-               *RightOperand = SE.getSCEVAtScope(ICond->getOperand(1), L);
+      isl_pw_aff *LHS, *RHS;
+      // For unsigned comparisons we assumed the signed bit of neither operand
+      // to be set. The comparison is equal to a signed comparison under this
+      // assumption.
+      bool NonNeg = ICond->isUnsigned();
+      const SCEV *LeftOperand = SE.getSCEVAtScope(ICond->getOperand(0), L),
+                 *RightOperand = SE.getSCEVAtScope(ICond->getOperand(1), L);
 
-    LeftOperand = tryForwardThroughPHI(LeftOperand, R, SE, &SD);
-    RightOperand = tryForwardThroughPHI(RightOperand, R, SE, &SD);
+      LeftOperand = tryForwardThroughPHI(LeftOperand, R, SE, &SD);
+      RightOperand = tryForwardThroughPHI(RightOperand, R, SE, &SD);
 
-    switch (ICond->getPredicate()) {
-    case ICmpInst::ICMP_ULT:
-      ConsequenceCondSet =
-          buildUnsignedConditionSets(BB, Condition, Domain, LeftOperand,
-                                     RightOperand, InvalidDomainMap, true);
-      break;
-    case ICmpInst::ICMP_ULE:
-      ConsequenceCondSet =
-          buildUnsignedConditionSets(BB, Condition, Domain, LeftOperand,
-                                     RightOperand, InvalidDomainMap, false);
-      break;
-    case ICmpInst::ICMP_UGT:
-      ConsequenceCondSet =
-          buildUnsignedConditionSets(BB, Condition, Domain, RightOperand,
-                                     LeftOperand, InvalidDomainMap, true);
-      break;
-    case ICmpInst::ICMP_UGE:
-      ConsequenceCondSet =
-          buildUnsignedConditionSets(BB, Condition, Domain, RightOperand,
-                                     LeftOperand, InvalidDomainMap, false);
-      break;
-    default:
-      LHS = getPwAff(BB, InvalidDomainMap, LeftOperand, NonNeg);
-      RHS = getPwAff(BB, InvalidDomainMap, RightOperand, NonNeg);
-      ConsequenceCondSet = buildConditionSet(ICond->getPredicate(),
-                                             isl::manage(LHS), isl::manage(RHS))
-                               .release();
-      break;
+      if (SE.isKnownPredicateAt(ICond->getPredicate(), LeftOperand,
+                                RightOperand, ICond)) {
+        ConsequenceCondSet = isl_set_universe(isl_set_get_space(Domain));
+      } else if (SE.isKnownPredicateAt(ICond->getInversePredicate(),
+                                       LeftOperand, RightOperand, ICond)) {
+        ConsequenceCondSet = isl_set_empty(isl_set_get_space(Domain));
+      } else {
+        switch (ICond->getPredicate()) {
+        case ICmpInst::ICMP_ULT:
+          ConsequenceCondSet =
+              buildUnsignedConditionSets(BB, Condition, Domain, LeftOperand,
+                                         RightOperand, InvalidDomainMap, true);
+          break;
+        case ICmpInst::ICMP_ULE:
+          ConsequenceCondSet =
+              buildUnsignedConditionSets(BB, Condition, Domain, LeftOperand,
+                                         RightOperand, InvalidDomainMap, false);
+          break;
+        case ICmpInst::ICMP_UGT:
+          ConsequenceCondSet =
+              buildUnsignedConditionSets(BB, Condition, Domain, RightOperand,
+                                         LeftOperand, InvalidDomainMap, true);
+          break;
+        case ICmpInst::ICMP_UGE:
+          ConsequenceCondSet =
+              buildUnsignedConditionSets(BB, Condition, Domain, RightOperand,
+                                         LeftOperand, InvalidDomainMap, false);
+          break;
+        default:
+          LHS = getPwAff(BB, InvalidDomainMap, LeftOperand, NonNeg);
+          RHS = getPwAff(BB, InvalidDomainMap, RightOperand, NonNeg);
+          ConsequenceCondSet = buildConditionSet(ICond->getPredicate(),
+                                                 isl::manage(LHS),
+                                                 isl::manage(RHS))
+                                   .release();
+          break;
+        }
+      }
     }
   }
-
   // If no terminator was given we are only looking for parameter constraints
   // under which @p Condition is true/false.
   if (!TI)
@@ -1692,10 +1710,21 @@ bool ScopBuilder::buildAccessSingleDim(MemAccInst Inst, ScopStmt *Stmt) {
   enum MemoryAccess::AccessType AccType =
       isa<LoadInst>(Inst) ? MemoryAccess::READ : MemoryAccess::MUST_WRITE;
 
-  const SCEV *AccessFunction =
-      SE.getSCEVAtScope(Address, LI.getLoopFor(Inst->getParent()));
+  Loop *AccessLoop = LI.getLoopFor(Inst->getParent());
+  const SCEV *AccessFunction = SE.getSCEVAtScope(Address, AccessLoop);
   const SCEVUnknown *BasePointer =
       dyn_cast<SCEVUnknown>(SE.getPointerBase(AccessFunction));
+
+  if (BasePointer) {
+    if (Value *RecoveredBase =
+            findInvariantPointerBase(BasePointer->getValue(), Inst.get(),
+                                     AccessLoop, SE)) {
+      if (auto *RecoveredBaseSCEV =
+              dyn_cast<SCEVUnknown>(SE.getPointerBase(SE.getSCEVAtScope(
+                  RecoveredBase, AccessLoop))))
+        BasePointer = RecoveredBaseSCEV;
+    }
+  }
 
   assert(BasePointer && "Could not find base pointer");
   AccessFunction = SE.getMinusSCEV(AccessFunction, BasePointer);
@@ -1703,12 +1732,14 @@ bool ScopBuilder::buildAccessSingleDim(MemAccInst Inst, ScopStmt *Stmt) {
   // Check if the access depends on a loop contained in a non-affine subregion.
   bool isVariantInNonAffineLoop = false;
   SetVector<const Loop *> Loops;
-  findLoops(AccessFunction, Loops);
-  for (const Loop *L : Loops)
-    if (Stmt->contains(L)) {
-      isVariantInNonAffineLoop = true;
-      break;
-    }
+  if (!isa<SCEVCouldNotCompute>(AccessFunction)) {
+    findLoops(AccessFunction, Loops);
+    for (const Loop *L : Loops)
+      if (Stmt->contains(L)) {
+        isVariantInNonAffineLoop = true;
+        break;
+      }
+  }
 
   InvariantLoadsSetTy AccessILS;
 
@@ -2307,8 +2338,12 @@ void ScopBuilder::updateAccessDimensionality() {
 
       if (Array->getNumberOfDimensions() != 1)
         continue;
+      if (!Access->isAffine())
+        continue;
       unsigned DivisibleSize = Array->getElemSizeInBytes();
       const SCEV *Subscript = Access->getSubscript(0);
+      if (isa<SCEVCouldNotCompute>(Subscript))
+        continue;
       while (!isDivisible(Subscript, DivisibleSize, SE))
         DivisibleSize /= 2;
       auto *Ty = IntegerType::get(SE.getContext(), DivisibleSize * 8);
@@ -2454,11 +2489,197 @@ void ScopBuilder::addPHIReadAccess(ScopStmt *PHIStmt, PHINode *PHI) {
                   MemoryKind::PHI);
 }
 
+static bool getAffineAccessIterationOffsets(ScopStmt &Stmt, MemoryAccess &Access,
+                                            SmallVectorImpl<int64_t> &Offsets) {
+  if (!Access.isArrayKind() || !Access.isAffine())
+    return false;
+
+  isl::map AccessRel = Access.getAddressFunction().intersect_domain(Stmt.getDomain());
+  if (AccessRel.is_empty())
+    return false;
+
+  if (!AccessRel.domain().is_equal(Stmt.getDomain())) {
+    POLLY_DEBUG(dbgs() << "Skipping logical-offset candidate for "
+                       << Stmt.getBaseName()
+                       << " because access domain differs: "
+                       << stringFromIslObj(AccessRel.domain()) << " vs "
+                       << Stmt.getDomainStr() << "\n");
+    return false;
+  }
+
+  unsigned InDims = unsignedFromIslSize(AccessRel.dim(isl::dim::in));
+  unsigned OutDims = unsignedFromIslSize(AccessRel.dim(isl::dim::out));
+  if (InDims == 0 || InDims != OutDims) {
+    POLLY_DEBUG(dbgs() << "Skipping logical-offset candidate for "
+                       << Stmt.getBaseName() << " because tuple dims differ: "
+                       << InDims << " vs " << OutDims << "\n");
+    return false;
+  }
+
+  if (InDims != 1) {
+    // TODO: offset-aware fusion for STL patterns
+    // Extend logical-offset recovery to multiple dimensions once we have a
+    // robust statement-to-access matching strategy for multidimensional loops.
+    return false;
+  }
+
+  isl::map NextIterMap = createNextIterationMap(Stmt.getDomainSpace(), 0);
+  isl::map NextAccessRel = NextIterMap.apply_range(AccessRel);
+  isl::map AccessSteps = AccessRel.reverse().apply_range(NextAccessRel);
+  AccessSteps =
+      isl::manage(isl_map_reset_tuple_id(AccessSteps.release(), isl_dim_in));
+  AccessSteps =
+      isl::manage(isl_map_reset_tuple_id(AccessSteps.release(), isl_dim_out));
+
+  SmallVector<int64_t, 1> StepOffsets;
+  if (!hasSingleConstantTupleDelta(AccessSteps.deltas(), &StepOffsets) ||
+      StepOffsets.size() != 1 || StepOffsets.front() == 0)
+    return false;
+
+  isl::set ZeroIter = Stmt.getDomain().fix_si(isl::dim::set, 0, 0);
+  isl::set BaseAccess = AccessRel.intersect_domain(ZeroIter).range();
+  isl::val BaseMin = getConstant(BaseAccess.dim_min(0), /*Max=*/false,
+                                 /*Min=*/true);
+  isl::val BaseMax =
+      getConstant(BaseAccess.dim_max(0), /*Max=*/true, /*Min=*/false);
+  if (BaseMin.is_null() || BaseMax.is_null() || BaseMin.is_nan() ||
+      BaseMax.is_nan() || !BaseMin.is_int() || !BaseMax.is_int() ||
+      !BaseMin.eq(BaseMax))
+    return false;
+
+  int64_t Step = StepOffsets.front();
+  int64_t Base = BaseMin.get_num_si();
+  if (Base % Step != 0)
+    return false;
+
+  Offsets.push_back(Base / Step);
+  bool IsConstant = true;
+  POLLY_DEBUG({
+    dbgs() << "Logical-offset probe for " << Stmt.getBaseName() << ": "
+           << stringFromIslObj(AccessRel) << "\n";
+    if (IsConstant) {
+      dbgs() << "  constant offsets [";
+      for (unsigned I = 0; I < Offsets.size(); ++I) {
+        if (I)
+          dbgs() << ", ";
+        dbgs() << Offsets[I];
+      }
+      dbgs() << "]\n";
+    } else {
+      dbgs() << "  not a constant tuple delta\n";
+    }
+  });
+  return IsConstant;
+}
+
+static bool collectConsistentLogicalOffsets(
+    ScopStmt &Stmt, function_ref<bool(const MemoryAccess &)> Predicate,
+    SmallVectorImpl<int64_t> &Offsets) {
+  bool Found = false;
+  for (MemoryAccess *Access : Stmt) {
+    if (!Predicate(*Access))
+      continue;
+
+    SmallVector<int64_t, 4> CandidateOffsets;
+    if (!getAffineAccessIterationOffsets(Stmt, *Access, CandidateOffsets))
+      continue;
+
+    if (!Found) {
+      Offsets.append(CandidateOffsets.begin(), CandidateOffsets.end());
+      Found = true;
+      continue;
+    }
+
+    if (Offsets != CandidateOffsets)
+      return false;
+  }
+  return Found;
+}
+
 void ScopBuilder::buildDomain(ScopStmt &Stmt) {
   isl::id Id = isl::id::alloc(scop->getIslCtx(), Stmt.getBaseName(), &Stmt);
 
   Stmt.Domain = scop->getDomainConditions(&Stmt);
   Stmt.Domain = Stmt.Domain.set_tuple_id(Id);
+}
+
+void ScopBuilder::buildLogicalDomainOffsets(ScopStmt &Stmt) {
+  SmallVector<int64_t, 4> Offsets;
+  auto IsArrayWrite = [](const MemoryAccess &Access) {
+    return Access.isArrayKind() && Access.isWrite();
+  };
+  auto IsArrayRead = [](const MemoryAccess &Access) {
+    return Access.isArrayKind() && Access.isRead();
+  };
+
+  bool Found = collectConsistentLogicalOffsets(Stmt, IsArrayWrite, Offsets);
+  if (!Found) {
+    Offsets.clear();
+    Found = collectConsistentLogicalOffsets(Stmt, IsArrayRead, Offsets);
+  }
+
+  if (!Found)
+    return;
+
+  Stmt.setLogicalIteratorOffsets(Offsets);
+
+  POLLY_DEBUG({
+    if (!Stmt.hasLogicalIteratorOffset())
+      return;
+    dbgs() << "Recognized logical iterator offsets for " << Stmt.getBaseName()
+           << ": [";
+    for (unsigned I = 0; I < Offsets.size(); ++I) {
+      if (I)
+        dbgs() << ", ";
+      dbgs() << Offsets[I];
+    }
+    dbgs() << "]\n";
+    dbgs() << "  logical domain: " << Stmt.getLogicalDomainStr() << "\n";
+  });
+}
+
+void ScopBuilder::buildCompactionPatternInfo(ScopStmt &Stmt) {
+  bool HasAffineInputRead = false;
+  bool HasWildcardMayWrite = false;
+  bool HasScalarRead = false;
+  bool HasScalarWrite = false;
+
+  for (MemoryAccess *Access : Stmt) {
+    if (Access->isArrayKind()) {
+      isl::map AccessRel = Access->getAccessRelation().intersect_domain(Stmt.getDomain());
+      if (Access->isRead() && Access->isAffine() &&
+          AccessRel.domain().is_equal(Stmt.getDomain()))
+        HasAffineInputRead = true;
+
+      if (Access->isMayWrite()) {
+        // TODO: offset-aware fusion for STL patterns
+        // Lowered copy_if/back_inserter statements typically arrive here as a
+        // wildcard output write { Stmt[i] -> Out[o0] } because the append
+        // position is carried by scalar SSA and is currently non-affine.
+        if (!AccessRel.is_single_valued() &&
+            unsignedFromIslSize(AccessRel.dim(isl::dim::out)) == 1)
+          HasWildcardMayWrite = true;
+      }
+      continue;
+    }
+
+    if (Access->isRead())
+      HasScalarRead = true;
+    if (Access->isWrite())
+      HasScalarWrite = true;
+  }
+
+  bool IsCompactionLike =
+      HasAffineInputRead && HasWildcardMayWrite && HasScalarRead &&
+      HasScalarWrite;
+  Stmt.setCompactionLikePattern(IsCompactionLike);
+
+  POLLY_DEBUG({
+    if (!IsCompactionLike)
+      return;
+    dbgs() << "Recognized compaction-like statement in " << Stmt.getBaseName()
+           << "\n";
+  });
 }
 
 void ScopBuilder::collectSurroundingLoops(ScopStmt &Stmt) {
@@ -3375,6 +3596,62 @@ ScopBuilder::buildAliasGroupsForAccesses() {
   BatchAAResults BAA(AA);
   AliasSetTracker AST(BAA);
 
+  auto getPrivateCompactionBase = [](Value *V) -> Value * {
+    SmallPtrSet<Value *, 8> Visited;
+
+    std::function<Value *(Value *)> Visit = [&](Value *Current) -> Value * {
+      if (!Current)
+        return nullptr;
+      Current = Current->stripPointerCasts();
+      if (!Visited.insert(Current).second)
+        return nullptr;
+
+      if (isIdentifiedObject(Current))
+        return Current;
+
+      if (auto *GEP = dyn_cast<GetElementPtrInst>(Current))
+        return Visit(GEP->getPointerOperand());
+
+      if (auto *Phi = dyn_cast<PHINode>(Current)) {
+        Value *Candidate = nullptr;
+        for (Value *Incoming : Phi->incoming_values()) {
+          if (isa<ConstantPointerNull>(Incoming))
+            continue;
+
+          Value *Resolved = Visit(Incoming);
+          if (!Resolved)
+            return nullptr;
+          if (Candidate && Candidate != Resolved)
+            return nullptr;
+          Candidate = Resolved;
+        }
+        return Candidate;
+      }
+
+      if (auto *Sel = dyn_cast<SelectInst>(Current)) {
+        Value *TrueV = Sel->getTrueValue();
+        Value *FalseV = Sel->getFalseValue();
+        if (isa<ConstantPointerNull>(TrueV))
+          return Visit(FalseV);
+        if (isa<ConstantPointerNull>(FalseV))
+          return Visit(TrueV);
+      }
+
+      return nullptr;
+    };
+
+    return Visit(V);
+  };
+
+  auto isPrivateCompactionOutputAccess = [&](MemoryAccess *MA) {
+    if (!MA->isMayWrite() || !MA->isArrayKind())
+      return false;
+    if (!MA->getStatement()->hasCompactionLikePattern())
+      return false;
+
+    return getPrivateCompactionBase(MA->getOriginalBaseAddr()) != nullptr;
+  };
+
   DenseMap<Value *, MemoryAccess *> PtrToAcc;
   DenseSet<const ScopArrayInfo *> HasWriteAccess;
   for (ScopStmt &Stmt : *scop) {
@@ -3388,6 +3665,8 @@ ScopBuilder::buildAliasGroupsForAccesses() {
 
     for (MemoryAccess *MA : Stmt) {
       if (MA->isScalarKind())
+        continue;
+      if (isPrivateCompactionOutputAccess(MA))
         continue;
       if (!MA->isRead())
         HasWriteAccess.insert(MA->getScopArrayInfo());
@@ -3717,6 +3996,10 @@ void ScopBuilder::buildScop(Region &R, AssumptionCache &AC) {
 
     buildDomain(Stmt);
     buildAccessRelations(Stmt);
+    if (PollyForceOffsetFusion)
+      buildLogicalDomainOffsets(Stmt);
+    if (PollyDetectCompactionPatterns || PollyForceOffsetFusion)
+      buildCompactionPatternInfo(Stmt);
 
     if (DetectReductions)
       checkForReductions(Stmt);

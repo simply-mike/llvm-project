@@ -1212,6 +1212,25 @@ ScopStmt::~ScopStmt() = default;
 
 std::string ScopStmt::getDomainStr() const { return stringFromIslObj(Domain); }
 
+isl::set ScopStmt::getLogicalDomain() const {
+  isl::set LogicalDomain = Domain;
+  for (auto P : llvm::enumerate(LogicalIteratorOffsets)) {
+    if (P.value() == 0)
+      continue;
+    LogicalDomain = shiftDim(LogicalDomain, P.index(), P.value());
+  }
+  return LogicalDomain;
+}
+
+std::string ScopStmt::getLogicalDomainStr() const {
+  return stringFromIslObj(getLogicalDomain());
+}
+
+bool ScopStmt::hasLogicalIteratorOffset() const {
+  return llvm::any_of(LogicalIteratorOffsets,
+                      [](int64_t Offset) { return Offset != 0; });
+}
+
 std::string ScopStmt::getScheduleStr() const {
   return stringFromIslObj(getSchedule());
 }
@@ -1255,6 +1274,12 @@ void ScopStmt::print(raw_ostream &OS, bool PrintInstructions) const {
 
   if (!Domain.is_null()) {
     OS.indent(16) << getDomainStr() << ";\n";
+    if (PollyForceOffsetFusion && hasLogicalIteratorOffset()) {
+      OS.indent(12) << "Logical Domain :=\n";
+      OS.indent(16) << getLogicalDomainStr() << ";\n";
+    }
+    if (PollyDetectCompactionPatterns && hasCompactionLikePattern())
+      OS.indent(12) << "Compaction Pattern :=\tcopy-filter-like\n";
   } else
     OS.indent(16) << "n/a\n";
 

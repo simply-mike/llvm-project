@@ -25,11 +25,13 @@ class LoopInfo;
 class Loop;
 class ScalarEvolution;
 class SCEV;
+class SCEVUnknown;
 class Region;
 class Pass;
 class DominatorTree;
 class RegionInfo;
 class RegionNode;
+class ICmpInst;
 } // namespace llvm
 
 namespace polly {
@@ -100,6 +102,47 @@ void recordAssumption(RecordedAssumptionsTy *RecordedAssumptions,
                       AssumptionKind Kind, isl::set Set, llvm::DebugLoc Loc,
                       AssumptionSign Sign, llvm::BasicBlock *BB = nullptr,
                       bool RTC = true);
+
+/// Recognize the lowered fast path of std::copy_if(..., back_inserter(...))
+/// where a reserved vector cannot grow inside the current loop.
+///
+/// The matcher is intentionally conservative and only accepts the canonical
+/// iterator/capacity PHI shape emitted after inlining. If it returns true, the
+/// comparison can be treated as loop-invariant true for SCoP detection and
+/// domain construction.
+bool matchNoGrowBackInserterCheck(llvm::ICmpInst &ICmp, llvm::Loop *L,
+                                  llvm::ScalarEvolution &SE,
+                                  const llvm::SCEV *&RemainingBytes,
+                                  const llvm::SCEV *&SourceSpanBytes);
+
+/// Recognize canonical pointer-iterator loop latch conditions of the form
+/// `next_ptr == end_ptr` where `next_ptr` is a constant-step increment of a
+/// loop-header PHI.
+///
+/// This covers inlined STL iterator loops whose trip counts are expressed as a
+/// pointer span rather than an integer induction variable. If
+/// @p BackedgeTakenCount is provided, it receives the equivalent byte-span
+/// based backedge count.
+bool matchPointerIteratorLoopTripCount(llvm::ICmpInst &ICmp, llvm::Loop *L,
+                                       llvm::ScalarEvolution &SE,
+                                       const llvm::SCEV **BackedgeTakenCount =
+                                           nullptr);
+
+/// Recover an invariant pointer seed for a loop-carried pointer value.
+///
+/// This is intended for lowered STL iterator/output-pointer patterns where the
+/// actual pointer used by the load/store is a loop-header PHI, but the memory
+/// object itself is still rooted in a loop-invariant base pointer.
+llvm::Value *findInvariantPointerBase(llvm::Value *V,
+                                      const llvm::Instruction *CtxI,
+                                      llvm::Loop *L,
+                                      llvm::ScalarEvolution &SE);
+
+/// Return true if the no-grow check described by
+/// `matchNoGrowBackInserterCheck` is already known to hold in the current
+/// context.
+bool isKnownNoGrowBackInserterBranch(llvm::ICmpInst &ICmp, llvm::Loop *L,
+                                     llvm::ScalarEvolution &SE);
 
 /// Type to remap values.
 using ValueMapT = llvm::DenseMap<llvm::AssertingVH<llvm::Value>,

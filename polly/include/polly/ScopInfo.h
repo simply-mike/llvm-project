@@ -32,6 +32,7 @@
 #include "llvm/Pass.h"
 #include "isl/isl-noexceptions.h"
 #include <cassert>
+#include <cstdint>
 #include <cstddef>
 #include <forward_list>
 #include <optional>
@@ -1206,6 +1207,20 @@ private:
   /// instance.
   isl::set Domain;
 
+  /// Constant logical offsets of this statement's iterators relative to the
+  /// canonical zero-based domain Polly builds from the CFG.
+  ///
+  /// For STL-like loops lowered from begin()+k/end()-k ranges the CFG-level
+  /// domain often remains zero-based while the affine array access reveals the
+  /// logical iteration space, e.g. Domain { 0 <= i < N-1 } and access A[1+i].
+  /// In such a case LogicalIteratorOffsets stores [+1] and getLogicalDomain()
+  /// returns { 1 <= i < N }.
+  SmallVector<int64_t, 4> LogicalIteratorOffsets;
+
+  /// Whether this statement matches a copy_if/back_inserter-like compaction
+  /// kernel after lowering to scalar SSA and a non-affine output index.
+  bool HasCompactionLikePattern = false;
+
   /// The memory accesses of this statement.
   ///
   /// The only side effects of a statement are its memory accesses.
@@ -1289,6 +1304,29 @@ public:
 
   /// Get an isl string representing this domain.
   std::string getDomainStr() const;
+
+  /// Get the statement domain shifted into its recognized logical iteration
+  /// space.
+  isl::set getLogicalDomain() const;
+
+  /// Get an isl string representing the logical domain.
+  std::string getLogicalDomainStr() const;
+
+  /// Return the recognized logical iterator offsets.
+  ArrayRef<int64_t> getLogicalIteratorOffsets() const {
+    return LogicalIteratorOffsets;
+  }
+
+  /// Return true if any logical iterator offset is non-zero.
+  bool hasLogicalIteratorOffset() const;
+
+  /// Set the recognized logical iterator offsets.
+  void setLogicalIteratorOffsets(ArrayRef<int64_t> Offsets) {
+    LogicalIteratorOffsets.assign(Offsets.begin(), Offsets.end());
+  }
+
+  bool hasCompactionLikePattern() const { return HasCompactionLikePattern; }
+  void setCompactionLikePattern(bool Value) { HasCompactionLikePattern = Value; }
 
   /// Get the schedule function of this ScopStmt.
   ///

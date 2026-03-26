@@ -588,6 +588,17 @@ class ScopBuilder final {
   /// Build the domain of @p Stmt.
   void buildDomain(ScopStmt &Stmt);
 
+  /// Recover constant logical iterator offsets from affine accesses.
+  ///
+  /// The CFG-derived domains are canonical zero-based domains. For loops
+  /// lowered from begin()+k/end()-k ranges we record the logical shift that is
+  /// visible in the primary affine access such that later optimizations can
+  /// reason in the user-visible iteration space.
+  void buildLogicalDomainOffsets(ScopStmt &Stmt);
+
+  /// Detect lowered copy_if/back_inserter-like compaction statements.
+  void buildCompactionPatternInfo(ScopStmt &Stmt);
+
   /// Fill NestLoops with loops surrounding @p Stmt.
   void collectSurroundingLoops(ScopStmt &Stmt);
 
