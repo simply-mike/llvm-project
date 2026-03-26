@@ -94,6 +94,134 @@ using namespace polly;
 #include "polly/Support/PollyDebug.h"
 #define DEBUG_TYPE "polly-detect"
 
+namespace {
+/// Recover the original pointer operand from a restricted integer expression
+/// used to rebuild an iterator with inttoptr(ptrtoint(base) + C).
+///
+/// We intentionally keep this conservative and only accept constant-preserving
+/// arithmetic/cast chains so that all non-trivial offset reasoning still goes
+/// through the normal SCEV affine checks later.
+static Value *findBasePointerForIntToPtr(Value *V) {
+  SmallPtrSet<Value *, 8> Visited;
+
+  std::function<Value *(Value *)> Visit = [&](Value *Current) -> Value * {
+    if (!Visited.insert(Current).second)
+      return nullptr;
+
+    if (auto *P2I = dyn_cast<PtrToIntInst>(Current))
+      return P2I->getOperand(0);
+
+    if (auto *Cast = dyn_cast<CastInst>(Current)) {
+      switch (Cast->getOpcode()) {
+      case Instruction::SExt:
+      case Instruction::ZExt:
+      case Instruction::Trunc:
+        return Visit(Cast->getOperand(0));
+      default:
+        return nullptr;
+      }
+    }
+
+    auto *BO = dyn_cast<BinaryOperator>(Current);
+    if (!BO)
+      return nullptr;
+
+    switch (BO->getOpcode()) {
+    case Instruction::Add:
+      if (isa<ConstantInt>(BO->getOperand(0)))
+        return Visit(BO->getOperand(1));
+      if (isa<ConstantInt>(BO->getOperand(1)))
+        return Visit(BO->getOperand(0));
+      return nullptr;
+    case Instruction::Sub:
+      if (isa<ConstantInt>(BO->getOperand(1)))
+        return Visit(BO->getOperand(0));
+      return nullptr;
+    default:
+      return nullptr;
+    }
+  };
+
+  return Visit(V);
+}
+
+/// Rebuild a pointer-typed SCEV expression as an integer offset relative to
+/// @p BasePtr when the expression originates from an inttoptr(ptrtoint(base)+C)
+/// iterator seed and affine pointer increments.
+static const SCEV *getPointerOffsetFromRecoveredBase(const SCEV *Expr,
+                                                     const SCEVUnknown *BasePtr,
+                                                     Loop *Scope,
+                                                     ScalarEvolution &SE) {
+  Type *PtrIntTy =
+      SE.getEffectiveSCEVType(PointerType::getUnqual(SE.getContext()));
+
+  std::function<const SCEV *(const SCEV *)> Visit =
+      [&](const SCEV *Current) -> const SCEV * {
+    if (!Current->getType()->isPointerTy())
+      return SE.getTruncateOrZeroExtend(Current, PtrIntTy);
+
+    if (auto *Unknown = dyn_cast<SCEVUnknown>(Current)) {
+      Value *V = Unknown->getValue();
+      if (V == BasePtr->getValue())
+        return SE.getZero(PtrIntTy);
+
+      auto *IntToPtr = dyn_cast<IntToPtrInst>(V);
+      if (!IntToPtr)
+        return SE.getCouldNotCompute();
+
+      Value *RecoveredBase = findBasePointerForIntToPtr(IntToPtr->getOperand(0));
+      if (RecoveredBase != BasePtr->getValue())
+        return SE.getCouldNotCompute();
+
+      const SCEV *BaseAsInt = SE.getPtrToIntExpr(BasePtr, PtrIntTy);
+      const SCEV *SeedInt =
+          Scope ? SE.getSCEVAtScope(IntToPtr->getOperand(0), Scope)
+                : SE.getSCEV(IntToPtr->getOperand(0));
+      if (isa<SCEVCouldNotCompute>(SeedInt))
+        return SeedInt;
+
+      SeedInt = SE.getTruncateOrZeroExtend(SeedInt, PtrIntTy);
+      return SE.getMinusSCEV(SeedInt, BaseAsInt);
+    }
+
+    if (auto *Add = dyn_cast<SCEVAddExpr>(Current)) {
+      SmallVector<const SCEV *, 4> Ops;
+      for (const SCEV *Op : Add->operands()) {
+        const SCEV *Normalized = Visit(Op);
+        if (isa<SCEVCouldNotCompute>(Normalized))
+          return Normalized;
+        Ops.push_back(Normalized);
+      }
+      return SE.getAddExpr(Ops);
+    }
+
+    if (auto *AddRec = dyn_cast<SCEVAddRecExpr>(Current)) {
+      SmallVector<const SCEV *, 4> Ops;
+      Ops.reserve(AddRec->getNumOperands());
+
+      const SCEV *Start = Visit(AddRec->getStart());
+      if (isa<SCEVCouldNotCompute>(Start))
+        return Start;
+      Ops.push_back(Start);
+
+      for (unsigned I = 1; I < AddRec->getNumOperands(); ++I) {
+        const SCEV *Step =
+            SE.getTruncateOrZeroExtend(AddRec->getOperand(I), PtrIntTy);
+        if (isa<SCEVCouldNotCompute>(Step))
+          return Step;
+        Ops.push_back(Step);
+      }
+
+      return SE.getAddRecExpr(Ops, AddRec->getLoop(), SCEV::FlagAnyWrap);
+    }
+
+    return SE.getCouldNotCompute();
+  };
+
+  return Visit(Expr);
+}
+} // namespace
+
 // This option is set to a very high value, as analyzing such loops increases
 // compile time on several cases. For experiments that enable this option,
 // a value of around 40 has been working to avoid run-time regressions with
@@ -381,6 +509,9 @@ void ScopDetection::detect(Function &F) {
     ValidRegions.remove(&DC.CurRegion);
   }
 
+  while (mergeAdjacentValidRegions())
+    ;
+
   NumProfScopRegions += ValidRegions.size();
   NumLoopsOverall += countBeneficialLoops(TopRegion, SE, LI, 0).NumLoops;
 
@@ -621,6 +752,12 @@ bool ScopDetection::isValidBranch(BasicBlock &BB, BranchInst *BI,
     return invalid<ReportUndefOperand>(Context, /*Assert=*/true, &BB, ICmp);
 
   Loop *L = LI.getLoopFor(&BB);
+  const SCEV *PointerIteratorCount = nullptr;
+  if (IsLoopBranch &&
+      matchPointerIteratorLoopTripCount(*ICmp, L, SE, &PointerIteratorCount))
+    return true;
+  if (isKnownNoGrowBackInserterBranch(*ICmp, L, SE))
+    return true;
   const SCEV *LHS = SE.getSCEVAtScope(ICmp->getOperand(0), L);
   const SCEV *RHS = SE.getSCEVAtScope(ICmp->getOperand(1), L);
 
@@ -640,6 +777,11 @@ bool ScopDetection::isValidBranch(BasicBlock &BB, BranchInst *BI,
   // Check for invalid usage of different pointers in a relational comparison.
   if (ICmp->isRelational() && involvesMultiplePtrs(LHS, RHS, L))
     return false;
+
+  if (SE.isKnownPredicateAt(ICmp->getPredicate(), LHS, RHS, ICmp))
+    return true;
+  if (SE.isKnownPredicateAt(ICmp->getInversePredicate(), LHS, RHS, ICmp))
+    return true;
 
   if (isAffine(LHS, L, Context) && isAffine(RHS, L, Context))
     return true;
@@ -1072,24 +1214,78 @@ bool ScopDetection::hasAffineMemoryAccesses(DetectionContext &Context) const {
 bool ScopDetection::isValidAccess(Instruction *Inst, const SCEV *AF,
                                   const SCEVUnknown *BP,
                                   DetectionContext &Context) const {
+  Loop *AccessLoop = LI.getLoopFor(Inst->getParent());
 
   if (!BP)
     return invalid<ReportNoBasePtr>(Context, /*Assert=*/true, Inst);
 
   auto *BV = BP->getValue();
+  bool RecoveredIntToPtrBase = false;
+  bool RecoveredLoopPhiBase = false;
   if (isa<UndefValue>(BV))
     return invalid<ReportUndefBasePtr>(Context, /*Assert=*/true, Inst);
 
-  // FIXME: Think about allowing IntToPtrInst
-  if (IntToPtrInst *Inst = dyn_cast<IntToPtrInst>(BV))
-    return invalid<ReportIntToPtr>(Context, /*Assert=*/true, Inst);
+  if (auto *IntToPtr = dyn_cast<IntToPtrInst>(BV)) {
+    Value *RecoveredBase = findBasePointerForIntToPtr(IntToPtr->getOperand(0));
+    if (!RecoveredBase)
+      return invalid<ReportIntToPtr>(Context, /*Assert=*/true, IntToPtr);
+
+    auto *RecoveredBaseSCEV =
+        dyn_cast<SCEVUnknown>(SE.getPointerBase(SE.getSCEVAtScope(
+            RecoveredBase, LI.getLoopFor(Inst->getParent()))));
+    if (!RecoveredBaseSCEV)
+      return invalid<ReportIntToPtr>(Context, /*Assert=*/true, IntToPtr);
+
+    // TODO: offset-aware fusion for STL patterns
+    // libc++ iterator lowering often rebuilds begin()+k through
+    // inttoptr(ptrtoint(base)+const). Normalize such cases back to the
+    // original pointer base so the remaining offset can be checked through the
+    // existing affine access machinery.
+    BP = RecoveredBaseSCEV;
+    BV = BP->getValue();
+    RecoveredIntToPtrBase = true;
+  } else if (Value *RecoveredBase =
+                 findInvariantPointerBase(BV, Inst, AccessLoop, SE)) {
+    auto *RecoveredBaseSCEV =
+        dyn_cast<SCEVUnknown>(SE.getPointerBase(SE.getSCEVAtScope(
+            RecoveredBase, AccessLoop)));
+    if (RecoveredBaseSCEV) {
+      // TODO: offset-aware fusion for STL patterns
+      // Lowered copy_if/back_inserter fast paths carry the append pointer in a
+      // loop-header PHI. Recover the loop-invariant seed so the access can
+      // still be modeled as a non-affine MAY_WRITE on the underlying array.
+      BP = RecoveredBaseSCEV;
+      BV = BP->getValue();
+      RecoveredLoopPhiBase = true;
+    }
+  }
 
   // Check that the base address of the access is invariant in the current
   // region.
   if (!isInvariant(*BV, Context.CurRegion, Context))
     return invalid<ReportVariantBasePtr>(Context, /*Assert=*/true, BV, Inst);
 
-  AF = SE.getMinusSCEV(AF, BP);
+  const SCEV *NormalizedAF = nullptr;
+  if (RecoveredIntToPtrBase)
+    NormalizedAF = getPointerOffsetFromRecoveredBase(AF, BP, AccessLoop, SE);
+  else
+    NormalizedAF = SE.getMinusSCEV(AF, BP);
+
+  if (NormalizedAF && !isa<SCEVCouldNotCompute>(NormalizedAF)) {
+    // TODO: offset-aware fusion for STL patterns
+    // Preserve affine add-recs whose base iterator was rebuilt through an
+    // inttoptr(ptrtoint(base)+const) seed by switching to an integer offset
+    // representation relative to the recovered pointer base.
+    AF = NormalizedAF;
+  } else {
+    AF = NormalizedAF ? NormalizedAF : SE.getCouldNotCompute();
+    if (RecoveredIntToPtrBase && isa<SCEVCouldNotCompute>(AF))
+      return invalid<ReportIntToPtr>(Context, /*Assert=*/true, Inst);
+    if (RecoveredLoopPhiBase && isa<SCEVCouldNotCompute>(AF) &&
+        !AllowNonAffine)
+      return invalid<ReportNonAffineAccess>(Context, /*Assert=*/true, AF, Inst,
+                                            BV);
+  }
 
   const SCEV *Size;
   if (!isa<MemIntrinsic>(Inst)) {
@@ -1112,10 +1308,12 @@ bool ScopDetection::isValidAccess(Instruction *Inst, const SCEV *AF,
 
   bool IsVariantInNonAffineLoop = false;
   SetVector<const Loop *> Loops;
-  findLoops(AF, Loops);
-  for (const Loop *L : Loops)
-    if (Context.BoxedLoopsSet.count(L))
-      IsVariantInNonAffineLoop = true;
+  if (!isa<SCEVCouldNotCompute>(AF)) {
+    findLoops(AF, Loops);
+    for (const Loop *L : Loops)
+      if (Context.BoxedLoopsSet.count(L))
+        IsVariantInNonAffineLoop = true;
+  }
 
   auto *Scope = LI.getLoopFor(Inst->getParent());
   bool IsAffine = !IsVariantInNonAffineLoop && isAffine(AF, Scope, Context);
@@ -1123,7 +1321,8 @@ bool ScopDetection::isValidAccess(Instruction *Inst, const SCEV *AF,
   if (isa<MemIntrinsic>(Inst) && !IsAffine) {
     return invalid<ReportNonAffineAccess>(Context, /*Assert=*/true, AF, Inst,
                                           BV);
-  } else if (PollyDelinearize && !IsVariantInNonAffineLoop) {
+  } else if (PollyDelinearize && !IsVariantInNonAffineLoop &&
+             !isa<SCEVCouldNotCompute>(AF)) {
     Context.Accesses[BP].push_back({Inst, AF});
 
     if (!IsAffine)
@@ -1342,8 +1541,23 @@ bool ScopDetection::isValidLoop(Loop *L, DetectionContext &Context) {
   L->getExitBlocks(ExitBlocks);
   BasicBlock *TheExitBlock = ExitBlocks[0];
   for (BasicBlock *ExitBB : ExitBlocks) {
-    if (TheExitBlock != ExitBB)
+    if (TheExitBlock != ExitBB) {
+      if (AllowNonAffineSubLoops && AllowNonAffineSubRegions &&
+          hasOffsetAwareFastPathExit(Context.CurRegion)) {
+        Region *R = RI.getRegionFor(L->getHeader());
+        while (R != &Context.CurRegion && !R->contains(L))
+          R = R->getParent();
+
+        if (addOverApproximatedRegion(R, Context)) {
+          POLLY_DEBUG(dbgs() << "Boxing multiple-exit loop "
+                             << L->getHeader()->getName()
+                             << " for offset-aware fast-path region "
+                             << Context.CurRegion.getNameStr() << "\n");
+          return true;
+        }
+      }
       return invalid<ReportLoopHasMultipleExits>(Context, /*Assert=*/true, L);
+    }
   }
 
   if (canUseISLTripCount(L, Context))
@@ -1505,11 +1719,16 @@ Region *ScopDetection::expandRegion(Region &R) {
     if (!Context.Log.hasErrors()) {
       // If the exit is valid check all blocks
       //  - if true, a valid region was found => store it + keep expanding
-      //  - if false, .tbd. => stop  (should this really end the loop?)
+      //  - if false, keep trying even larger non-canonical regions. An
+      //    intermediate expansion may still be structurally invalid while a
+      //    wider region above it becomes valid again after versioning or CFG
+      //    cleanup.
       if (!allBlocksValid(Context) || Context.Log.hasErrors()) {
         removeCachedResults(*ExpandedRegion);
         DetectionContextMap.erase(P);
-        break;
+        ExpandedRegion =
+            std::unique_ptr<Region>(ExpandedRegion->getExpandedRegion());
+        continue;
       }
 
       // Store this region, because it is the greatest valid (encountered so
@@ -1549,6 +1768,26 @@ static bool regionWithoutLoops(Region &R, LoopInfo &LI) {
       return false;
 
   return true;
+}
+
+static bool shouldKeepRegionForOffsetAwareStitching(const Region &R) {
+  BasicBlock *Exit = R.getExit();
+  return Exit && Exit->hasName() && Exit->getName().contains(".polly.nogrow.edge");
+}
+
+static bool hasOffsetAwareFastPathExit(const Region &R) {
+  return shouldKeepRegionForOffsetAwareStitching(R);
+}
+
+static void collectOffsetAwareStitchRegions(const Region &R,
+                                            SmallVectorImpl<const Region *> &Out,
+                                            SmallPtrSetImpl<const Region *> &Seen) {
+  for (auto &SubRegion : R) {
+    const Region *Sub = SubRegion.get();
+    if (shouldKeepRegionForOffsetAwareStitching(*Sub) && Seen.insert(Sub).second)
+      Out.push_back(Sub);
+    collectOffsetAwareStitchRegions(*Sub, Out, Seen);
+  }
 }
 
 void ScopDetection::removeCachedResultsRecursively(const Region &R) {
@@ -1623,11 +1862,75 @@ void ScopDetection::findScops(Region &R) {
     if (!ExpandedR)
       continue;
 
+    bool KeepCurrentForStitching =
+        shouldKeepRegionForOffsetAwareStitching(*CurrentRegion);
     R.addSubRegion(ExpandedR, true);
     ValidRegions.insert(ExpandedR);
     removeCachedResults(*CurrentRegion);
     removeCachedResultsRecursively(*ExpandedR);
+    if (KeepCurrentForStitching)
+      ValidRegions.insert(CurrentRegion);
   }
+}
+
+bool ScopDetection::mergeAdjacentValidRegions() {
+  SmallVector<const Region *, 8> Candidates(ValidRegions.begin(),
+                                            ValidRegions.end());
+  SmallPtrSet<const Region *, 16> Seen(Candidates.begin(), Candidates.end());
+  for (const Region *R : ValidRegions)
+    collectOffsetAwareStitchRegions(*R, Candidates, Seen);
+
+  for (const Region *First : Candidates) {
+    if (!ValidRegions.count(First) || !First->getExit())
+      continue;
+
+    for (const Region *Second : Candidates) {
+      if (First == Second || !ValidRegions.count(Second) || !Second->getExit())
+        continue;
+      if (First->contains(Second) || Second->contains(First))
+        continue;
+      if (!DT.dominates(First->getEntry(), Second->getEntry()))
+        continue;
+      if (!DT.dominates(First->getExit(), Second->getEntry()))
+        continue;
+
+      auto MergedRegion = std::make_unique<Region>(
+          const_cast<BasicBlock *>(First->getEntry()),
+          const_cast<BasicBlock *>(Second->getExit()), &RI,
+          const_cast<DominatorTree *>(&DT));
+      BBPair P = getBBPairForRegion(MergedRegion.get());
+      if (DetectionContextMap.count(P))
+        continue;
+
+      auto Context = std::make_unique<DetectionContext>(*MergedRegion, AA,
+                                                        /*Verifying=*/false);
+      if (!isValidRegion(*Context))
+        continue;
+      if (!isProfitableRegion(*Context))
+        continue;
+
+      const Region *MergedPtr = MergedRegion.get();
+      SyntheticRegions.push_back(std::move(MergedRegion));
+      DetectionContextMap[P] = std::move(Context);
+      ValidRegions.insert(MergedPtr);
+
+      SmallVector<const Region *, 8> ToRemove;
+      for (const Region *R : ValidRegions) {
+        if (R == MergedPtr)
+          continue;
+        if (MergedPtr->contains(R))
+          ToRemove.push_back(R);
+      }
+      for (const Region *R : ToRemove)
+        ValidRegions.remove(R);
+
+      POLLY_DEBUG(dbgs() << "Merged adjacent valid regions into synthetic SCoP: "
+                         << MergedPtr->getNameStr() << "\n");
+      return true;
+    }
+  }
+
+  return false;
 }
 
 bool ScopDetection::allBlocksValid(DetectionContext &Context) {

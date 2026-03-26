@@ -217,6 +217,10 @@ private:
       DenseMap<BBPair, std::unique_ptr<DetectionContext>>;
   DetectionContextMapTy DetectionContextMap;
 
+  /// Temporary synthetic regions created while stitching adjacent valid source
+  /// regions into a larger SCoP candidate.
+  SmallVector<std::unique_ptr<Region>, 4> SyntheticRegions;
+
   /// Cache for the isErrorBlock function.
   DenseMap<std::tuple<const BasicBlock *, const Region *>, bool>
       ErrorBlockCache;
@@ -304,6 +308,13 @@ private:
   ///
   /// @param The region tree to scan for scops.
   void findScops(Region &R);
+
+  /// Try to merge adjacent valid regions into a larger synthetic candidate.
+  ///
+  /// This is a conservative fallback for source-level STL lowering where the
+  /// region tree may split a natural pipeline into multiple consecutive valid
+  /// regions even though their combined entry/exit pair is still a valid SCoP.
+  bool mergeAdjacentValidRegions();
 
   /// Check if all basic block in the region are valid.
   ///
