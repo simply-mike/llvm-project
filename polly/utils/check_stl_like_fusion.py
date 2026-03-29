@@ -19,6 +19,7 @@ EXAMPLES = {
         "require_offset": True,
         "require_compaction": False,
         "min_fused_stmts": 3,
+        "require_codegen_rtc": True,
     },
     "pointer": {
         "source": INPUTS / "stl_like_offset_pointer.cpp",
@@ -26,6 +27,7 @@ EXAMPLES = {
         "require_offset": True,
         "require_compaction": False,
         "min_fused_stmts": 2,
+        "require_codegen_rtc": False,
     },
     "vector": {
         "source": INPUTS / "stl_like_offset_vector.cpp",
@@ -33,6 +35,7 @@ EXAMPLES = {
         "require_offset": False,
         "require_compaction": True,
         "min_fused_stmts": 4,
+        "require_codegen_rtc": False,
     },
 }
 
@@ -79,6 +82,14 @@ def detect_compaction_evidence(scops_text, debug_text):
     )
 
 
+def detect_codegen_rtc_evidence(optimized_ir_text):
+    return (
+        "%polly.rtc.result" in optimized_ir_text
+        and "br i1 %polly.rtc.result" in optimized_ir_text
+        and "br i1 false, label %polly.start" not in optimized_ir_text
+    )
+
+
 def compile_source(clangxx, source, ll_path, extra_cxxflags):
     cmd = [
         clangxx,
@@ -101,7 +112,7 @@ def compile_source(clangxx, source, ll_path, extra_cxxflags):
     return run_cmd(cmd)
 
 
-def run_polly(opt, plugin, ll_path):
+def run_polly(opt, plugin, ll_path, run_codegen):
     prefix = [
         opt,
         "-load-pass-plugin",
@@ -140,11 +151,32 @@ def run_polly(opt, plugin, ll_path):
     scops_rc, scops_out, scops_err = run_cmd(scops_cmd)
     sched_rc, sched_out, sched_err = run_cmd(schedule_cmd)
     dbg_rc, dbg_out, dbg_err = run_cmd(debug_cmd)
+    optimized_text = ""
+    codegen_rc, codegen_out, codegen_err = 0, "", ""
+    if run_codegen:
+        optimized_ll = ll_path.with_name("optimized.ll")
+        codegen_cmd = prefix + [
+            "-passes=polly-prepare,scop(polly-opt-isl,polly-codegen),verify",
+            "-polly-pattern-matching-based-opts=false",
+            "-polly-postopts=0",
+            "-polly-process-unprofitable",
+            "-polly-allow-nonaffine",
+            "-polly-force-offset-fusion=1",
+            "-S",
+            str(ll_path),
+            "-o",
+            str(optimized_ll),
+        ]
+        codegen_rc, codegen_out, codegen_err = run_cmd(codegen_cmd)
+        if optimized_ll.exists():
+            optimized_text = optimized_ll.read_text(encoding="utf-8")
 
     return {
         "scops": (scops_rc, scops_out + scops_err),
         "schedule": (sched_rc, sched_out + sched_err),
         "debug": (dbg_rc, dbg_out + dbg_err),
+        "codegen": (codegen_rc, codegen_out + codegen_err),
+        "optimized_ir": optimized_text,
     }
 
 
@@ -167,22 +199,30 @@ def evaluate(
             "artifacts": {"compile.txt": out + err},
         }
 
-    polly = run_polly(opt, plugin, ll_path)
+    polly = run_polly(opt, plugin, ll_path, info["require_codegen_rtc"])
     artifacts = {
         "compile.txt": out + err,
         "scops.txt": polly["scops"][1],
         "schedule.txt": polly["schedule"][1],
         "debug.txt": polly["debug"][1],
+        "codegen.txt": polly["codegen"][1],
+        "optimized.ll": polly["optimized_ir"],
     }
 
     offset_ok = detect_offset_evidence(artifacts["scops.txt"], artifacts["debug.txt"])
     compaction_ok = detect_compaction_evidence(
         artifacts["scops.txt"], artifacts["debug.txt"]
     )
+    codegen_rtc_ok = detect_codegen_rtc_evidence(artifacts["optimized.ll"])
     fused_stmt_count = count_max_fused_stmt_count(artifacts["schedule.txt"])
-    rc_ok = all(polly_output[0] == 0 for polly_output in polly.values())
+    rc_ok = all(
+        polly[name][0] == 0 for name in ("scops", "schedule", "debug", "codegen")
+    )
     has_signal = (
-        fused_stmt_count >= info["min_fused_stmts"] or offset_ok or compaction_ok
+        fused_stmt_count >= info["min_fused_stmts"]
+        or offset_ok
+        or compaction_ok
+        or codegen_rtc_ok
     )
 
     checks = []
@@ -192,6 +232,8 @@ def evaluate(
             checks.append(offset_ok)
         if info["require_compaction"]:
             checks.append(compaction_ok)
+        if info["require_codegen_rtc"]:
+            checks.append(codegen_rtc_ok)
         checks.append(fused_stmt_count >= info["min_fused_stmts"])
     else:
         checks.append(has_signal)
@@ -201,6 +243,7 @@ def evaluate(
     reason.append(f"max fused stmt count = {fused_stmt_count}")
     reason.append(f"offset evidence = {offset_ok}")
     reason.append(f"compaction evidence = {compaction_ok}")
+    reason.append(f"codegen rtc evidence = {codegen_rtc_ok}")
     reason.append(f"mode = {'strict' if strict else 'diagnostic'}")
 
     return {

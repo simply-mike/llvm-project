@@ -1473,6 +1473,16 @@ static bool hasExitingBlocks(Loop *L) {
   return !ExitingBlocks.empty();
 }
 
+static bool shouldKeepRegionForOffsetAwareStitching(const Region &R) {
+  BasicBlock *Exit = R.getExit();
+  return Exit && Exit->hasName() &&
+         Exit->getName().contains(".polly.nogrow.edge");
+}
+
+static bool hasOffsetAwareFastPathExit(const Region &R) {
+  return shouldKeepRegionForOffsetAwareStitching(R);
+}
+
 bool ScopDetection::canUseISLTripCount(Loop *L, DetectionContext &Context) {
   // FIXME: Yes, this is bad. isValidCFG() may call invalid<Reason>() which
   // causes the SCoP to be rejected regardless on whether non-ISL trip counts
@@ -1768,15 +1778,6 @@ static bool regionWithoutLoops(Region &R, LoopInfo &LI) {
       return false;
 
   return true;
-}
-
-static bool shouldKeepRegionForOffsetAwareStitching(const Region &R) {
-  BasicBlock *Exit = R.getExit();
-  return Exit && Exit->hasName() && Exit->getName().contains(".polly.nogrow.edge");
-}
-
-static bool hasOffsetAwareFastPathExit(const Region &R) {
-  return shouldKeepRegionForOffsetAwareStitching(R);
 }
 
 static void collectOffsetAwareStitchRegions(const Region &R,

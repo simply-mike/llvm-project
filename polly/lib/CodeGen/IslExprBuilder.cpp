@@ -93,7 +93,10 @@ bool IslExprBuilder::hasLargeInts(isl::ast_expr Expr) {
     isl::val Val = Expr.get_val();
     APInt APValue = APIntFromVal(Val);
     auto BitWidth = APValue.getBitWidth();
-    return BitWidth >= 64;
+    // TODO: offset-aware fusion for STL patterns
+    // The RTC builder is hard-wired to i64 code generation, so values that fit
+    // exactly into 64 bits are fine. Reject only wider integers here.
+    return BitWidth > 64;
   }
 
   assert(Type == isl_ast_expr_op && "Expected isl_ast_expr of type operation");

@@ -26,7 +26,9 @@ STL-lowered pipelines in Polly.
   (`std::iota`, `std::transform`, `std::replace_copy`). Current strict harness
   result:
   `[{ Stmt6[i0] -> [(i0)]; Stmt4[i0] -> [(1 + i0)]; Stmt2[i0] -> [(i0)] }]`
-  i.e. a single fused band on 3 statements.
+  i.e. a single fused band on 3 statements. The corresponding
+  `optimized.ll` also contains a live `%polly.rtc.result` branch into the
+  generated Polly path instead of a constant `false` dispatch.
 - `/private/tmp/polly_three_transform_nonconst.cpp`
   Ad-hoc source-level check with three affine-friendly `std::transform` calls.
   Current schedule result:

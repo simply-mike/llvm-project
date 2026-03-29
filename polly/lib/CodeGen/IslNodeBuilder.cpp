@@ -1413,23 +1413,26 @@ Value *IslNodeBuilder::generateSCEV(const SCEV *Expr) {
 /// of this run-time check to false to be conservatively correct,
 Value *IslNodeBuilder::createRTC(isl_ast_expr *Condition) {
   auto ExprBuilder = getExprBuilder();
+  bool NeedsWideIntRTC = ExprBuilder.hasLargeInts(isl::manage_copy(Condition));
 
-  // In case the AST expression has integers larger than 64 bit, bail out. The
-  // resulting LLVM-IR will contain operations on types that use more than 64
-  // bits. These are -- in case wrapping intrinsics are used -- translated to
-  // runtime library calls that are not available on all systems (e.g., Android)
-  // and consequently will result in linker errors.
-  if (ExprBuilder.hasLargeInts(isl::manage_copy(Condition))) {
-    isl_ast_expr_free(Condition);
-    return Builder.getFalse();
-  }
-
-  ExprBuilder.setTrackOverflow(true);
+  // TODO: offset-aware fusion for STL patterns
+  // Some RTCs for pointer-based source-level pipelines legitimately need
+  // constants wider than signed i64 (for instance when comparing ptrtoint-based
+  // ranges close to 2^63). Do not disable Polly codegen for such cases.
+  //
+  // We still avoid overflow-tracking intrinsics for these wide expressions
+  // because non-native integer overflow intrinsics may lower to libcalls on
+  // some targets. Plain wide integer arithmetic is fine in LLVM IR and is
+  // conservative for the run-time condition we are materializing here.
+  ExprBuilder.setTrackOverflow(!NeedsWideIntRTC);
   Value *RTC = ExprBuilder.create(Condition);
   if (!RTC->getType()->isIntegerTy(1))
     RTC = Builder.CreateIsNotNull(RTC);
   Value *OverflowHappened =
-      Builder.CreateNot(ExprBuilder.getOverflowState(), "polly.rtc.overflown");
+      NeedsWideIntRTC
+          ? Builder.getTrue()
+          : Builder.CreateNot(ExprBuilder.getOverflowState(),
+                              "polly.rtc.overflown");
 
   if (PollyGenerateRTCPrint) {
     auto *F = Builder.GetInsertBlock()->getParent();
