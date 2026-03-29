@@ -12,6 +12,19 @@ STL-lowered pipelines in Polly.
 - Source-level no-growth fast path detection for `std::vector` +
   `std::back_inserter`, including a dedicated `...polly.nogrow.edge` CFG anchor.
 
+## Working patterns
+
+- Three size-stable passes over one contiguous array/buffer, where the domains
+  differ only by small constant offsets.
+- Pipelines that keep all statements as ordinary loop bodies after lowering,
+  instead of collapsing one stage into `memcpy`/`memset`.
+- Best current source-level pattern: `std::iota` / `std::transform` /
+  `std::replace_copy`.
+- Also promising in general: `std::copy` / `std::transform` / `std::copy` and
+  multi-`std::transform` chains with `[0..N)`, `[1..N)`, `[0..N-1)` domains.
+- Still outside the stable end-to-end path: data-dependent output growth such
+  as `std::copy_if(..., std::back_inserter(...))`.
+
 ## Confirmed examples
 
 - `test/ScheduleOptimizer/offset-aware-fusion.ll`
@@ -29,6 +42,10 @@ STL-lowered pipelines in Polly.
   i.e. a single fused band on 3 statements. The corresponding
   `optimized.ll` also contains a live `%polly.rtc.result` branch into the
   generated Polly path instead of a constant `false` dispatch.
+- `test/CodeGen/offset-aware-fusion-live-rtc.ll`
+  Hermetic codegen regression that checks the stable 3-way source-level-like
+  case still emits a live Polly runtime check and enters `polly.start` via
+  `%polly.rtc.result`.
 - `/private/tmp/polly_three_transform_nonconst.cpp`
   Ad-hoc source-level check with three affine-friendly `std::transform` calls.
   Current schedule result:
@@ -50,6 +67,13 @@ STL-lowered pipelines in Polly.
 
 ```bash
 ninja -C build-standalone-cxx17 LLVMPolly
+
+python3 utils/check_stl_like_fusion.py \
+  --strict \
+  --example iota_transform_replace_copy \
+  --plugin build-standalone-cxx17/lib/LLVMPolly.so \
+  --opt ../build/bin/opt \
+  --clangxx clang++
 
 python3 utils/check_stl_like_fusion.py \
   --strict \
