@@ -21,6 +21,12 @@ STL-lowered pipelines in Polly.
 - `test/Inputs/stl_like_offset_pointer.cpp`
   Source-level friendly STL-like chain. Current strict harness result:
   fused band on 2 statements.
+- `test/Inputs/stl_like_offset_iota_transform_replace_copy.cpp`
+  Source-level friendly 3-way STL chain with three different algorithms
+  (`std::iota`, `std::transform`, `std::replace_copy`). Current strict harness
+  result:
+  `[{ Stmt6[i0] -> [(i0)]; Stmt4[i0] -> [(1 + i0)]; Stmt2[i0] -> [(i0)] }]`
+  i.e. a single fused band on 3 statements.
 - `/private/tmp/polly_three_transform_nonconst.cpp`
   Ad-hoc source-level check with three affine-friendly `std::transform` calls.
   Current schedule result:
