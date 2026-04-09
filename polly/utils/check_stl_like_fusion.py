@@ -21,6 +21,14 @@ EXAMPLES = {
         "min_fused_stmts": 3,
         "require_codegen_rtc": True,
     },
+    "three_transform": {
+        "source": INPUTS / "stl_like_offset_three_transform.cpp",
+        "description": "Three std::transform passes with small constant offsets",
+        "require_offset": True,
+        "require_compaction": False,
+        "min_fused_stmts": 3,
+        "require_codegen_rtc": False,
+    },
     "pointer": {
         "source": INPUTS / "stl_like_offset_pointer.cpp",
         "description": "STL algorithms over raw pointers",
@@ -264,7 +272,13 @@ def main():
     parser.add_argument("--plugin", required=True)
     parser.add_argument(
         "--example",
-        choices=["iota_transform_replace_copy", "pointer", "vector", "all"],
+        choices=[
+            "iota_transform_replace_copy",
+            "three_transform",
+            "pointer",
+            "vector",
+            "all",
+        ],
         default="all",
     )
     parser.add_argument("--keep-dir", default="")
