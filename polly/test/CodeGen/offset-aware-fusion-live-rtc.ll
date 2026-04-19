@@ -5,12 +5,13 @@
 ; RUN:   -polly-force-offset-fusion=1 \
 ; RUN:   < %s | FileCheck %s
 ;
-; Verify that a source-level friendly 3-way STL-like pipeline not only gets a
-; fused schedule, but also keeps a live Polly runtime check in the generated
-; LLVM IR instead of falling back to a constant false dispatch.
+; Verify that a source-level friendly 3-way pipeline of standard-library
+; algorithms not only gets a fused schedule, but also keeps a live Polly
+; runtime check in the generated LLVM IR instead of falling back to a constant
+; false dispatch.
 
-target datalayout = "e-m:o-i64:64-i128:128-n32:64-S128-Fn32"
-target triple = "arm64-apple-macosx26.0.0"
+target datalayout = "e-m:e-p:64:64-i64:64-i128:128-n32:64-S128"
+target triple = "riscv64-unknown-linux-gnu"
 
 ; CHECK-LABEL: define void @stl_like_offset_iota_transform_replace_copy(
 ; CHECK: entry:
@@ -82,16 +83,15 @@ return:                                           ; preds = %for.body.i22, %_ZNS
   ret void
 }
 
-attributes #0 = { mustprogress nofree norecurse nosync nounwind ssp memory(readwrite, inaccessiblemem: none) "frame-pointer"="non-leaf" "no-trapping-math"="true" "probe-stack"="__chkstk_darwin" "stack-protector-buffer-size"="8" "target-cpu"="apple-m1" "target-features"="+aes,+altnzcv,+bti,+ccdp,+ccidx,+complxnum,+crc,+dit,+dotprod,+flagm,+fp-armv8,+fp16fml,+fptoint,+fullfp16,+jsconv,+lse,+neon,+pauth,+perfmon,+predres,+ras,+rcpc,+rdm,+sb,+sha2,+sha3,+specrestrict,+ssbs,+v8.1a,+v8.2a,+v8.3a,+v8.4a,+v8.5a,+v8a,+zcm,+zcz" }
+attributes #0 = { mustprogress nofree norecurse nosync nounwind ssp memory(readwrite, inaccessiblemem: none) "frame-pointer"="non-leaf" "no-trapping-math"="true" "stack-protector-buffer-size"="8" }
 
-!llvm.module.flags = !{!0, !1, !2, !3}
-!llvm.ident = !{!4}
+!llvm.module.flags = !{!0, !1, !2}
+!llvm.ident = !{!3}
 
-!0 = !{i32 2, !"SDK Version", [2 x i32] [i32 26, i32 2]}
-!1 = !{i32 1, !"wchar_size", i32 4}
-!2 = !{i32 8, !"PIC Level", i32 2}
-!3 = !{i32 7, !"frame-pointer", i32 1}
-!4 = !{!"Apple clang version 17.0.0 (clang-1700.6.4.2)"}
+!0 = !{i32 1, !"wchar_size", i32 4}
+!1 = !{i32 8, !"PIC Level", i32 2}
+!2 = !{i32 7, !"frame-pointer", i32 1}
+!3 = !{!"clang version 23.0.0git"}
 !5 = !{!6, !6, i64 0}
 !6 = !{!"int", !7, i64 0}
 !7 = !{!"omnipotent char", !8, i64 0}

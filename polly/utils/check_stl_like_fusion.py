@@ -31,7 +31,7 @@ EXAMPLES = {
     },
     "pointer": {
         "source": INPUTS / "stl_like_offset_pointer.cpp",
-        "description": "STL algorithms over raw pointers",
+        "description": "Standard-library algorithms over raw pointers",
         "require_offset": True,
         "require_compaction": False,
         "min_fused_stmts": 2,
@@ -98,7 +98,15 @@ def detect_codegen_rtc_evidence(optimized_ir_text):
     )
 
 
-def compile_source(clangxx, source, ll_path, extra_cxxflags):
+def compile_source(
+    clangxx,
+    source,
+    ll_path,
+    extra_cxxflags,
+    target="",
+    sysroot="",
+    gcc_toolchain="",
+):
     cmd = [
         clangxx,
         "-std=c++20",
@@ -108,6 +116,12 @@ def compile_source(clangxx, source, ll_path, extra_cxxflags):
         "-fno-rtti",
         "-fno-discard-value-names",
     ]
+    if target:
+        cmd.append(f"--target={target}")
+    if sysroot:
+        cmd.append(f"--sysroot={sysroot}")
+    if gcc_toolchain:
+        cmd.append(f"--gcc-toolchain={gcc_toolchain}")
     cmd.extend(DEFAULT_CXXFLAGS)
     cmd.extend(extra_cxxflags)
     cmd.extend(
@@ -121,11 +135,14 @@ def compile_source(clangxx, source, ll_path, extra_cxxflags):
 
 
 def run_polly(opt, plugin, ll_path, run_codegen):
-    prefix = [
-        opt,
-        "-load-pass-plugin",
-        plugin,
-    ]
+    prefix = [opt]
+    if plugin:
+        prefix.extend(
+            [
+                "-load-pass-plugin",
+                plugin,
+            ]
+        )
 
     common_flags = [
         "-polly-process-unprofitable",
@@ -136,8 +153,8 @@ def run_polly(opt, plugin, ll_path, run_codegen):
     ]
 
     # Run polly-prepare explicitly in the integration harness so source-level
-    # STL lowering exercises the same no-growth CFG versioning path as the full
-    # optimization pipeline.
+    # standard-library algorithm lowering exercises the same no-growth CFG
+    # versioning path as the full optimization pipeline.
     scops_cmd = prefix + [
         "-passes=polly-prepare,print<polly-function-scops>",
         "-polly-detect-compaction-patterns",
@@ -193,12 +210,30 @@ def write_text(path, text):
 
 
 def evaluate(
-    example_name, info, workdir, clangxx, opt, plugin, extra_cxxflags, strict
+    example_name,
+    info,
+    workdir,
+    clangxx,
+    opt,
+    plugin,
+    extra_cxxflags,
+    strict,
+    target,
+    sysroot,
+    gcc_toolchain,
 ):
     source = pathlib.Path(info["source"])
     ll_path = workdir / f"{example_name}.ll"
 
-    rc, out, err = compile_source(clangxx, source, ll_path, extra_cxxflags)
+    rc, out, err = compile_source(
+        clangxx,
+        source,
+        ll_path,
+        extra_cxxflags,
+        target=target,
+        sysroot=sysroot,
+        gcc_toolchain=gcc_toolchain,
+    )
     if rc != 0:
         return {
             "name": example_name,
@@ -223,9 +258,9 @@ def evaluate(
     )
     codegen_rtc_ok = detect_codegen_rtc_evidence(artifacts["optimized.ll"])
     fused_stmt_count = count_max_fused_stmt_count(artifacts["schedule.txt"])
-    rc_ok = all(
-        polly[name][0] == 0 for name in ("scops", "schedule", "debug", "codegen")
-    )
+    # Some toolchains build opt without debug-only support. Treat the debug
+    # dump as best-effort and do not fail the whole integration check on it.
+    rc_ok = all(polly[name][0] == 0 for name in ("scops", "schedule", "codegen"))
     has_signal = (
         fused_stmt_count >= info["min_fused_stmts"]
         or offset_ok
@@ -265,11 +300,33 @@ def evaluate(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Best-effort integration check for STL-like Polly fusion."
+        description=(
+            "Best-effort integration check for Polly fusion on sequences of "
+            "standard-library algorithms."
+        )
     )
     parser.add_argument("--clangxx", default=shutil.which("clang++") or "clang++")
     parser.add_argument("--opt", default=shutil.which("opt") or "opt")
-    parser.add_argument("--plugin", required=True)
+    parser.add_argument(
+        "--plugin",
+        default="",
+        help="Path to LLVMPolly.so. Leave empty when opt already has Polly built in.",
+    )
+    parser.add_argument(
+        "--target",
+        default="",
+        help="Cross-compilation target triple passed to clang++.",
+    )
+    parser.add_argument(
+        "--sysroot",
+        default="",
+        help="Optional sysroot passed to clang++ for target headers and libc++.",
+    )
+    parser.add_argument(
+        "--gcc-toolchain",
+        default="",
+        help="Optional GCC toolchain root passed to clang++ for cross headers/libs.",
+    )
     parser.add_argument(
         "--example",
         choices=[
@@ -316,6 +373,9 @@ def main():
             args.plugin,
             args.cxxflag,
             args.strict,
+            args.target,
+            args.sysroot,
+            args.gcc_toolchain,
         )
         results.append(result)
 
