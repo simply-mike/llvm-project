@@ -14,8 +14,8 @@
 #ifndef POLLY_ISLTOOLS_H
 #define POLLY_ISLTOOLS_H
 
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Sequence.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/iterator.h"
 #include "isl/isl-noexceptions.h"
 #include <algorithm>
@@ -549,14 +549,12 @@ bool hasCompatibleConstantDomainOffset(
 /// If @p Offsets is provided, it receives the constant value for each set
 /// dimension. Returns false if the delta set is empty or any dimension is not a
 /// single integer constant across all pieces.
-bool hasSingleConstantTupleDelta(isl::set Deltas,
-                                 llvm::SmallVectorImpl<int64_t> *Offsets =
-                                     nullptr);
+bool hasSingleConstantTupleDelta(
+    isl::set Deltas, llvm::SmallVectorImpl<int64_t> *Offsets = nullptr);
 
 /// Union-set overload for hasSingleConstantTupleDelta(isl::set,...).
-bool hasSingleConstantTupleDelta(isl::union_set Deltas,
-                                 llvm::SmallVectorImpl<int64_t> *Offsets =
-                                     nullptr);
+bool hasSingleConstantTupleDelta(
+    isl::union_set Deltas, llvm::SmallVectorImpl<int64_t> *Offsets = nullptr);
 
 /// Check that @p End is valid and return an iterator from @p Begin to @p End
 ///

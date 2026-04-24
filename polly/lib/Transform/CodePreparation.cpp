@@ -40,9 +40,15 @@ using namespace polly;
 
 namespace {
 
-static SmallVector<BranchInst *, 4>
+struct NoGrowBranchInfo {
+  BranchInst *Branch = nullptr;
+  unsigned FastSuccIdx = 0;
+  unsigned GrowthSuccIdx = 1;
+};
+
+static SmallVector<NoGrowBranchInfo, 4>
 collectNoGrowthBranches(Function &F, LoopInfo &LI, ScalarEvolution &SE) {
-  SmallVector<BranchInst *, 4> Branches;
+  SmallVector<NoGrowBranchInfo, 4> Branches;
   if (!PollyForceOffsetFusion)
     return Branches;
 
@@ -55,8 +61,17 @@ collectNoGrowthBranches(Function &F, LoopInfo &LI, ScalarEvolution &SE) {
     if (!ICmp)
       continue;
 
+    bool NoGrowWhenTrue = false;
+    const SCEV *RemainingBytes = nullptr;
+    const SCEV *SourceSpanBytes = nullptr;
+    if (!matchNoGrowBackInserterCheck(*ICmp, LI.getLoopFor(&BB), SE,
+                                      RemainingBytes, SourceSpanBytes,
+                                      &NoGrowWhenTrue))
+      continue;
+
     if (isKnownNoGrowBackInserterBranch(*ICmp, LI.getLoopFor(&BB), SE))
-      Branches.push_back(BI);
+      Branches.push_back(
+          {BI, NoGrowWhenTrue ? 0u : 1u, NoGrowWhenTrue ? 1u : 0u});
   }
 
   return Branches;
@@ -67,6 +82,8 @@ struct NoGrowVersioningCandidate {
   Loop *L = nullptr;
   const SCEV *RemainingBytes = nullptr;
   const SCEV *SourceSpanBytes = nullptr;
+  unsigned FastSuccIdx = 0;
+  unsigned GrowthSuccIdx = 1;
 };
 
 static SmallVector<NoGrowVersioningCandidate, 2>
@@ -88,8 +105,9 @@ collectNoGrowVersioningCandidates(Function &F, LoopInfo &LI,
     Loop *L = LI.getLoopFor(&BB);
     const SCEV *RemainingBytes = nullptr;
     const SCEV *SourceSpanBytes = nullptr;
+    bool NoGrowWhenTrue = false;
     if (!matchNoGrowBackInserterCheck(*ICmp, L, SE, RemainingBytes,
-                                      SourceSpanBytes))
+                                      SourceSpanBytes, &NoGrowWhenTrue))
       continue;
 
     if (isKnownNoGrowBackInserterBranch(*ICmp, L, SE))
@@ -97,17 +115,19 @@ collectNoGrowVersioningCandidates(Function &F, LoopInfo &LI,
 
     LLVM_DEBUG(dbgs() << "Polly found versionable no-growth candidate in "
                       << F.getName() << " at block " << BB.getName() << "\n");
-    Candidates.push_back({BI, L, RemainingBytes, SourceSpanBytes});
+    Candidates.push_back({BI, L, RemainingBytes, SourceSpanBytes,
+                          NoGrowWhenTrue ? 0u : 1u, NoGrowWhenTrue ? 1u : 0u});
   }
 
   return Candidates;
 }
 
 static bool rewriteNoGrowthFastPaths(Function &F,
-                                     ArrayRef<BranchInst *> Branches) {
+                                     ArrayRef<NoGrowBranchInfo> Branches) {
   bool Changed = false;
 
-  for (BranchInst *BI : Branches) {
+  for (const NoGrowBranchInfo &BranchInfo : Branches) {
+    BranchInst *BI = BranchInfo.Branch;
     if (!BI || !BI->getParent() || !BI->isConditional())
       continue;
 
@@ -116,8 +136,8 @@ static bool rewriteNoGrowthFastPaths(Function &F,
       continue;
 
     BasicBlock *BB = BI->getParent();
-    BasicBlock *FastPath = BI->getSuccessor(0);
-    BasicBlock *GrowthPath = BI->getSuccessor(1);
+    BasicBlock *FastPath = BI->getSuccessor(BranchInfo.FastSuccIdx);
+    BasicBlock *GrowthPath = BI->getSuccessor(BranchInfo.GrowthSuccIdx);
     if (FastPath == GrowthPath)
       continue;
 
@@ -146,7 +166,9 @@ static bool rewriteNoGrowthFastPaths(Function &F,
   return true;
 }
 
-static bool isCanonicalNoGrowVersioningLoop(Loop &L, BranchInst &GrowthBranch) {
+static bool isCanonicalNoGrowVersioningLoop(Loop &L, BranchInst &GrowthBranch,
+                                            unsigned FastSuccIdx,
+                                            unsigned GrowthSuccIdx) {
   if (!L.getHeader() || L.getNumBlocks() < 4)
     return false;
   if (!L.getLoopLatch())
@@ -158,9 +180,9 @@ static bool isCanonicalNoGrowVersioningLoop(Loop &L, BranchInst &GrowthBranch) {
   if (!HeaderBr || !HeaderBr->isConditional())
     return false;
 
-  BasicBlock *FastSucc = GrowthBranch.getSuccessor(0);
-    BasicBlock *GrowthSucc = GrowthBranch.getSuccessor(1);
-    BasicBlock *Latch = L.getLoopLatch();
+  BasicBlock *FastSucc = GrowthBranch.getSuccessor(FastSuccIdx);
+  BasicBlock *GrowthSucc = GrowthBranch.getSuccessor(GrowthSuccIdx);
+  BasicBlock *Latch = L.getLoopLatch();
   if (!L.contains(FastSucc) || !L.contains(GrowthSucc) || !L.contains(Latch))
     return false;
 
@@ -168,16 +190,19 @@ static bool isCanonicalNoGrowVersioningLoop(Loop &L, BranchInst &GrowthBranch) {
 }
 
 static void rewriteClonedNoGrowBranch(BranchInst &OrigGrowthBranch,
+                                      unsigned FastSuccIdx,
+                                      unsigned GrowthSuccIdx,
                                       ValueToValueMapTy &VMap) {
   auto *ClonedBB = cast<BasicBlock>(VMap[OrigGrowthBranch.getParent()]);
   auto *ClonedBI = cast<BranchInst>(ClonedBB->getTerminator());
   auto *ClonedICmp = dyn_cast<ICmpInst>(ClonedBI->getCondition());
   BasicBlock *ClonedFastSucc =
-      cast<BasicBlock>(VMap[OrigGrowthBranch.getSuccessor(0)]);
+      cast<BasicBlock>(VMap[OrigGrowthBranch.getSuccessor(FastSuccIdx)]);
   BasicBlock *ClonedGrowthSucc =
-      cast<BasicBlock>(VMap[OrigGrowthBranch.getSuccessor(1)]);
+      cast<BasicBlock>(VMap[OrigGrowthBranch.getSuccessor(GrowthSuccIdx)]);
 
-  BranchInst *FastBranch = BranchInst::Create(ClonedFastSucc, ClonedBI->getIterator());
+  BranchInst *FastBranch =
+      BranchInst::Create(ClonedFastSucc, ClonedBI->getIterator());
   FastBranch->setDebugLoc(ClonedBI->getDebugLoc());
   ClonedBI->eraseFromParent();
   if (is_contained(predecessors(ClonedGrowthSucc), ClonedBB))
@@ -443,14 +468,16 @@ collectFastPathSliceBlocks(BasicBlock *Entry, BasicBlock *Exit) {
   return Blocks;
 }
 
-static BasicBlock *cloneFastPathSlice(
-    BasicBlock *Entry, BasicBlock *Exit, ArrayRef<BasicBlock *> OrigBlocks,
-    ValueToValueMapTy &VMap, StringRef Suffix) {
+static BasicBlock *cloneFastPathSlice(BasicBlock *Entry, BasicBlock *Exit,
+                                      ArrayRef<BasicBlock *> OrigBlocks,
+                                      ValueToValueMapTy &VMap,
+                                      StringRef Suffix) {
   SmallPtrSet<BasicBlock *, 16> OrigBlockSet(OrigBlocks.begin(),
                                              OrigBlocks.end());
 
   for (BasicBlock *OrigBB : OrigBlocks) {
-    BasicBlock *Clone = CloneBasicBlock(OrigBB, VMap, Suffix, OrigBB->getParent());
+    BasicBlock *Clone =
+        CloneBasicBlock(OrigBB, VMap, Suffix, OrigBB->getParent());
     VMap[OrigBB] = Clone;
   }
 
@@ -473,40 +500,47 @@ static BasicBlock *cloneFastPathSlice(
   return cast<BasicBlock>(VMap[Entry]);
 }
 
-static bool versionNoGrowFastPaths(Function &F,
-                                   ArrayRef<NoGrowVersioningCandidate> Candidates,
-                                   LoopInfo &LI, DominatorTree &DT,
-                                   ScalarEvolution &SE) {
+static bool
+versionNoGrowFastPaths(Function &F,
+                       ArrayRef<NoGrowVersioningCandidate> Candidates,
+                       LoopInfo &LI, DominatorTree &DT, ScalarEvolution &SE) {
   bool Changed = false;
 
   for (const NoGrowVersioningCandidate &Candidate : Candidates) {
     BranchInst *GrowthBranch = Candidate.GrowthBranch;
-    if (!GrowthBranch || !GrowthBranch->getParent() || !GrowthBranch->isConditional())
+    if (!GrowthBranch || !GrowthBranch->getParent() ||
+        !GrowthBranch->isConditional())
       continue;
 
     Loop *L = Candidate.L;
     if (!L) {
-      LLVM_DEBUG(dbgs() << "Polly skipped no-growth versioning candidate without loop\n");
+      LLVM_DEBUG(
+          dbgs()
+          << "Polly skipped no-growth versioning candidate without loop\n");
       continue;
     }
-    if (!isCanonicalNoGrowVersioningLoop(*L, *GrowthBranch)) {
-      LLVM_DEBUG(dbgs() << "Polly skipped non-canonical no-growth loop at header "
-                        << L->getHeader()->getName() << "\n");
+    if (!isCanonicalNoGrowVersioningLoop(*L, *GrowthBranch,
+                                         Candidate.FastSuccIdx,
+                                         Candidate.GrowthSuccIdx)) {
+      LLVM_DEBUG(
+          dbgs() << "Polly skipped non-canonical no-growth loop at header "
+                 << L->getHeader()->getName() << "\n");
       continue;
     }
 
     BasicBlock *Header = L->getHeader();
     BasicBlock *LoopPred = L->getLoopPredecessor();
     if (!Header || !LoopPred) {
-      LLVM_DEBUG(dbgs() << "Polly skipped no-growth versioning due to missing loop predecessor for "
+      LLVM_DEBUG(dbgs() << "Polly skipped no-growth versioning due to missing "
+                           "loop predecessor for "
                         << (Header ? Header->getName() : "<null>") << "\n");
       continue;
     }
 
     if (!L->getLoopPreheader()) {
       SmallVector<BasicBlock *, 1> Preds = {LoopPred};
-      BasicBlock *NewPreheader =
-          SplitBlockPredecessors(Header, Preds, ".polly.nogrow.preheader", &DT, &LI);
+      BasicBlock *NewPreheader = SplitBlockPredecessors(
+          Header, Preds, ".polly.nogrow.preheader", &DT, &LI);
       if (!NewPreheader)
         continue;
       LoopPred = NewPreheader;
@@ -530,21 +564,23 @@ static bool versionNoGrowFastPaths(Function &F,
       }
     }
     if (!SliceExit) {
-      LLVM_DEBUG(dbgs() << "Polly skipped no-growth versioning due to missing fast-path exit for "
+      LLVM_DEBUG(dbgs() << "Polly skipped no-growth versioning due to missing "
+                           "fast-path exit for "
                         << Header->getName() << "\n");
       continue;
     }
 
     BasicBlock *InitialEntry = OrigPreheader->getSinglePredecessor();
     if (!InitialEntry) {
-      LLVM_DEBUG(dbgs() << "Polly skipped no-growth versioning due to ambiguous preheader predecessor for "
+      LLVM_DEBUG(dbgs() << "Polly skipped no-growth versioning due to "
+                           "ambiguous preheader predecessor for "
                         << Header->getName() << "\n");
       continue;
     }
 
     BasicBlock *SliceEntry = InitialEntry;
-    for (BasicBlock *CandidateEntry : collectNoGrowVersioningEntries(InitialEntry,
-                                                                     DT)) {
+    for (BasicBlock *CandidateEntry :
+         collectNoGrowVersioningEntries(InitialEntry, DT)) {
       BasicBlock *CandidatePred = CandidateEntry->getSinglePredecessor();
       if (!CandidatePred)
         break;
@@ -560,7 +596,8 @@ static bool versionNoGrowFastPaths(Function &F,
     if (SliceEntry != InitialEntry) {
       BasicBlock *VersionPred = SliceEntry->getSinglePredecessor();
       if (!VersionPred) {
-        LLVM_DEBUG(dbgs() << "Polly skipped widened no-growth versioning due to missing single predecessor for slice entry "
+        LLVM_DEBUG(dbgs() << "Polly skipped widened no-growth versioning due "
+                             "to missing single predecessor for slice entry "
                           << SliceEntry->getName() << "\n");
         continue;
       }
@@ -569,8 +606,9 @@ static bool versionNoGrowFastPaths(Function &F,
       BasicBlock *VersionCheckBB = SplitBlockPredecessors(
           SliceEntry, Preds, ".polly.nogrow.check", &DT, &LI);
       if (!VersionCheckBB) {
-        LLVM_DEBUG(dbgs() << "Polly failed to split widened version check block for "
-                          << SliceEntry->getName() << "\n");
+        LLVM_DEBUG(
+            dbgs() << "Polly failed to split widened version check block for "
+                   << SliceEntry->getName() << "\n");
         continue;
       }
 
@@ -578,17 +616,18 @@ static bool versionNoGrowFastPaths(Function &F,
       SmallVector<BasicBlock *, 16> SliceBlocks =
           collectFastPathSliceBlocks(SliceEntry, SliceExit);
       if (SliceBlocks.empty()) {
-        LLVM_DEBUG(dbgs() << "Polly skipped widened no-growth versioning due to empty slice for "
+        LLVM_DEBUG(dbgs() << "Polly skipped widened no-growth versioning due "
+                             "to empty slice for "
                           << Header->getName() << "\n");
         continue;
       }
 
-      BasicBlock *ClonedEntry =
-          cloneFastPathSlice(SliceEntry, SliceExit, SliceBlocks, VMap,
-                             ".polly.nogrow");
-      rewriteClonedNoGrowBranch(*GrowthBranch, VMap);
-      auto *ClonedGrowthSucc =
-          cast<BasicBlock>(VMap[GrowthBranch->getSuccessor(1)]);
+      BasicBlock *ClonedEntry = cloneFastPathSlice(
+          SliceEntry, SliceExit, SliceBlocks, VMap, ".polly.nogrow");
+      rewriteClonedNoGrowBranch(*GrowthBranch, Candidate.FastSuccIdx,
+                                Candidate.GrowthSuccIdx, VMap);
+      auto *ClonedGrowthSucc = cast<BasicBlock>(
+          VMap[GrowthBranch->getSuccessor(Candidate.GrowthSuccIdx)]);
       SmallVector<BasicBlock *, 8> DeadClonedBlocks =
           collectExclusivelyDeadSubtree(ClonedGrowthSucc);
       if (!DeadClonedBlocks.empty())
@@ -599,16 +638,15 @@ static bool versionNoGrowFastPaths(Function &F,
       Value *Remaining = Expander.expandCodeFor(
           Candidate.RemainingBytes, Candidate.RemainingBytes->getType(),
           Builder.GetInsertPoint());
-      Value *Source = Expander.expandCodeFor(Candidate.SourceSpanBytes,
-                                             Candidate.SourceSpanBytes->getType(),
-                                             Builder.GetInsertPoint());
+      Value *Source = Expander.expandCodeFor(
+          Candidate.SourceSpanBytes, Candidate.SourceSpanBytes->getType(),
+          Builder.GetInsertPoint());
       Value *EnoughCapacity =
           Builder.CreateICmpUGE(Remaining, Source, "polly.nogrow");
 
       auto *OldBranch = cast<BranchInst>(VersionCheckBB->getTerminator());
-      BranchInst *NewBranch =
-          BranchInst::Create(ClonedEntry, SliceEntry, EnoughCapacity,
-                             OldBranch->getIterator());
+      BranchInst *NewBranch = BranchInst::Create(
+          ClonedEntry, SliceEntry, EnoughCapacity, OldBranch->getIterator());
       NewBranch->setDebugLoc(OldBranch->getDebugLoc());
       OldBranch->eraseFromParent();
 
@@ -619,7 +657,8 @@ static bool versionNoGrowFastPaths(Function &F,
     } else {
       BasicBlock *VersionPred = OrigPreheader->getSinglePredecessor();
       if (!VersionPred) {
-        LLVM_DEBUG(dbgs() << "Polly skipped no-growth versioning due to ambiguous preheader predecessor for "
+        LLVM_DEBUG(dbgs() << "Polly skipped no-growth versioning due to "
+                             "ambiguous preheader predecessor for "
                           << Header->getName() << "\n");
         continue;
       }
@@ -638,7 +677,8 @@ static bool versionNoGrowFastPaths(Function &F,
       SmallVector<BasicBlock *, 4> ExitBlocks;
       L->getExitBlocks(ExitBlocks);
       if (ExitBlocks.empty()) {
-        LLVM_DEBUG(dbgs() << "Polly skipped no-growth versioning due to missing exit blocks for "
+        LLVM_DEBUG(dbgs() << "Polly skipped no-growth versioning due to "
+                             "missing exit blocks for "
                           << Header->getName() << "\n");
         continue;
       }
@@ -655,16 +695,17 @@ static bool versionNoGrowFastPaths(Function &F,
         NormalExit = ExitBlocks.front();
 
       BasicBlock *InsertBefore = NormalExit;
-      Loop *ClonedLoop = cloneLoopWithPreheader(InsertBefore, VersionCheckBB, L,
-                                                VMap, ".polly.nogrow", &LI,
-                                                &DT, ClonedBlocks);
+      Loop *ClonedLoop =
+          cloneLoopWithPreheader(InsertBefore, VersionCheckBB, L, VMap,
+                                 ".polly.nogrow", &LI, &DT, ClonedBlocks);
       if (!ClonedLoop)
         continue;
       remapInstructionsInBlocks(ClonedBlocks, VMap);
       BasicBlock *OrigExit = NormalExit;
       addClonedExitPhiInputs(*L, VMap);
 
-      rewriteClonedNoGrowBranch(*GrowthBranch, VMap);
+      rewriteClonedNoGrowBranch(*GrowthBranch, Candidate.FastSuccIdx,
+                                Candidate.GrowthSuccIdx, VMap);
       SmallVector<BasicBlock *, 4> ExitingBlocks;
       L->getExitingBlocks(ExitingBlocks);
       for (BasicBlock *OrigExiting : ExitingBlocks) {
@@ -675,7 +716,8 @@ static bool versionNoGrowFastPaths(Function &F,
                  << (ClonedExiting ? ClonedExiting->getName() : "<null>")
                  << " against exit " << OrigExit->getName() << "\n";
         });
-        if (!ClonedExiting || !is_contained(successors(ClonedExiting), OrigExit))
+        if (!ClonedExiting ||
+            !is_contained(successors(ClonedExiting), OrigExit))
           continue;
 
         if (BasicBlock *DedicatedExit =
@@ -688,8 +730,8 @@ static bool versionNoGrowFastPaths(Function &F,
           break;
         }
       }
-      auto *ClonedGrowthSucc =
-          cast<BasicBlock>(VMap[GrowthBranch->getSuccessor(1)]);
+      auto *ClonedGrowthSucc = cast<BasicBlock>(
+          VMap[GrowthBranch->getSuccessor(Candidate.GrowthSuccIdx)]);
       SmallVector<BasicBlock *, 8> DeadClonedBlocks =
           collectExclusivelyDeadSubtree(ClonedGrowthSucc);
       if (!DeadClonedBlocks.empty())
@@ -700,16 +742,16 @@ static bool versionNoGrowFastPaths(Function &F,
       Value *Remaining = Expander.expandCodeFor(
           Candidate.RemainingBytes, Candidate.RemainingBytes->getType(),
           Builder.GetInsertPoint());
-      Value *Source = Expander.expandCodeFor(Candidate.SourceSpanBytes,
-                                             Candidate.SourceSpanBytes->getType(),
-                                             Builder.GetInsertPoint());
+      Value *Source = Expander.expandCodeFor(
+          Candidate.SourceSpanBytes, Candidate.SourceSpanBytes->getType(),
+          Builder.GetInsertPoint());
       Value *EnoughCapacity =
           Builder.CreateICmpUGE(Remaining, Source, "polly.nogrow");
 
       auto *OldBranch = cast<BranchInst>(VersionCheckBB->getTerminator());
-      BranchInst *NewBranch =
-          BranchInst::Create(cast<BasicBlock>(VMap[OrigPreheader]), OrigPreheader,
-                             EnoughCapacity, OldBranch->getIterator());
+      BranchInst *NewBranch = BranchInst::Create(
+          cast<BasicBlock>(VMap[OrigPreheader]), OrigPreheader, EnoughCapacity,
+          OldBranch->getIterator());
       NewBranch->setDebugLoc(OldBranch->getDebugLoc());
       OldBranch->eraseFromParent();
 
@@ -759,7 +801,7 @@ PreservedAnalyses CodePreparationPass::run(Function &F,
                                            FunctionAnalysisManager &FAM) {
   auto &LI = FAM.getResult<LoopAnalysis>(F);
   auto &SE = FAM.getResult<ScalarEvolutionAnalysis>(F);
-  SmallVector<BranchInst *, 4> NoGrowthBranches =
+  SmallVector<NoGrowBranchInfo, 4> NoGrowthBranches =
       collectNoGrowthBranches(F, LI, SE);
   SmallVector<NoGrowVersioningCandidate, 2> NoGrowVersioningCandidates =
       collectNoGrowVersioningCandidates(F, LI, SE);
@@ -805,7 +847,7 @@ bool CodePreparation::runOnFunction(Function &F) {
   SE = &getAnalysis<ScalarEvolutionWrapperPass>().getSE();
   auto *DTWP = getAnalysisIfAvailable<DominatorTreeWrapperPass>();
   DominatorTree *DT = DTWP ? &DTWP->getDomTree() : nullptr;
-  SmallVector<BranchInst *, 4> NoGrowthBranches =
+  SmallVector<NoGrowBranchInfo, 4> NoGrowthBranches =
       collectNoGrowthBranches(F, *LI, *SE);
   SmallVector<NoGrowVersioningCandidate, 2> NoGrowVersioningCandidates =
       collectNoGrowVersioningCandidates(F, *LI, *SE);

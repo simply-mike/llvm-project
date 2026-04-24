@@ -169,7 +169,8 @@ static const SCEV *getPointerOffsetFromRecoveredBase(const SCEV *Expr,
       if (!IntToPtr)
         return SE.getCouldNotCompute();
 
-      Value *RecoveredBase = findBasePointerForIntToPtr(IntToPtr->getOperand(0));
+      Value *RecoveredBase =
+          findBasePointerForIntToPtr(IntToPtr->getOperand(0));
       if (RecoveredBase != BasePtr->getValue())
         return SE.getCouldNotCompute();
 
@@ -1230,9 +1231,8 @@ bool ScopDetection::isValidAccess(Instruction *Inst, const SCEV *AF,
     if (!RecoveredBase)
       return invalid<ReportIntToPtr>(Context, /*Assert=*/true, IntToPtr);
 
-    auto *RecoveredBaseSCEV =
-        dyn_cast<SCEVUnknown>(SE.getPointerBase(SE.getSCEVAtScope(
-            RecoveredBase, LI.getLoopFor(Inst->getParent()))));
+    auto *RecoveredBaseSCEV = dyn_cast<SCEVUnknown>(SE.getPointerBase(
+        SE.getSCEVAtScope(RecoveredBase, LI.getLoopFor(Inst->getParent()))));
     if (!RecoveredBaseSCEV)
       return invalid<ReportIntToPtr>(Context, /*Assert=*/true, IntToPtr);
 
@@ -1246,9 +1246,8 @@ bool ScopDetection::isValidAccess(Instruction *Inst, const SCEV *AF,
     RecoveredIntToPtrBase = true;
   } else if (Value *RecoveredBase =
                  findInvariantPointerBase(BV, Inst, AccessLoop, SE)) {
-    auto *RecoveredBaseSCEV =
-        dyn_cast<SCEVUnknown>(SE.getPointerBase(SE.getSCEVAtScope(
-            RecoveredBase, AccessLoop)));
+    auto *RecoveredBaseSCEV = dyn_cast<SCEVUnknown>(
+        SE.getPointerBase(SE.getSCEVAtScope(RecoveredBase, AccessLoop)));
     if (RecoveredBaseSCEV) {
       // TODO: offset-aware fusion for STL patterns
       // Lowered copy_if/back_inserter fast paths carry the append pointer in a
@@ -1281,8 +1280,7 @@ bool ScopDetection::isValidAccess(Instruction *Inst, const SCEV *AF,
     AF = NormalizedAF ? NormalizedAF : SE.getCouldNotCompute();
     if (RecoveredIntToPtrBase && isa<SCEVCouldNotCompute>(AF))
       return invalid<ReportIntToPtr>(Context, /*Assert=*/true, Inst);
-    if (RecoveredLoopPhiBase && isa<SCEVCouldNotCompute>(AF) &&
-        !AllowNonAffine)
+    if (RecoveredLoopPhiBase && isa<SCEVCouldNotCompute>(AF) && !AllowNonAffine)
       return invalid<ReportNonAffineAccess>(Context, /*Assert=*/true, AF, Inst,
                                             BV);
   }
@@ -1780,12 +1778,14 @@ static bool regionWithoutLoops(Region &R, LoopInfo &LI) {
   return true;
 }
 
-static void collectOffsetAwareStitchRegions(const Region &R,
-                                            SmallVectorImpl<const Region *> &Out,
-                                            SmallPtrSetImpl<const Region *> &Seen) {
+static void
+collectOffsetAwareStitchRegions(const Region &R,
+                                SmallVectorImpl<const Region *> &Out,
+                                SmallPtrSetImpl<const Region *> &Seen) {
   for (auto &SubRegion : R) {
     const Region *Sub = SubRegion.get();
-    if (shouldKeepRegionForOffsetAwareStitching(*Sub) && Seen.insert(Sub).second)
+    if (shouldKeepRegionForOffsetAwareStitching(*Sub) &&
+        Seen.insert(Sub).second)
       Out.push_back(Sub);
     collectOffsetAwareStitchRegions(*Sub, Out, Seen);
   }
@@ -1895,10 +1895,10 @@ bool ScopDetection::mergeAdjacentValidRegions() {
       if (!DT.dominates(First->getExit(), Second->getEntry()))
         continue;
 
-      auto MergedRegion = std::make_unique<Region>(
-          const_cast<BasicBlock *>(First->getEntry()),
-          const_cast<BasicBlock *>(Second->getExit()), &RI,
-          const_cast<DominatorTree *>(&DT));
+      auto MergedRegion =
+          std::make_unique<Region>(const_cast<BasicBlock *>(First->getEntry()),
+                                   const_cast<BasicBlock *>(Second->getExit()),
+                                   &RI, const_cast<DominatorTree *>(&DT));
       BBPair P = getBBPairForRegion(MergedRegion.get());
       if (DetectionContextMap.count(P))
         continue;
@@ -1925,8 +1925,9 @@ bool ScopDetection::mergeAdjacentValidRegions() {
       for (const Region *R : ToRemove)
         ValidRegions.remove(R);
 
-      POLLY_DEBUG(dbgs() << "Merged adjacent valid regions into synthetic SCoP: "
-                         << MergedPtr->getNameStr() << "\n");
+      POLLY_DEBUG(
+          dbgs() << "Merged adjacent valid regions into synthetic SCoP: "
+                 << MergedPtr->getNameStr() << "\n");
       return true;
     }
   }

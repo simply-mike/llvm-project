@@ -14,11 +14,11 @@
 #include "polly/Options.h"
 #include "polly/ScopInfo.h"
 #include "polly/Support/SCEVValidator.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/RegionInfo.h"
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
-#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/LoopUtils.h"
@@ -126,7 +126,8 @@ static const SCEV *getLoopSourceSpanBytes(Loop *L, ScalarEvolution &SE) {
   return TryOperandOrder(Cmp->getOperand(1), Cmp->getOperand(0));
 }
 
-static Value *resolveNonNullPointerPhiIncoming(Value *V, const Instruction *CtxI,
+static Value *resolveNonNullPointerPhiIncoming(Value *V,
+                                               const Instruction *CtxI,
                                                ScalarEvolution &SE) {
   auto *Phi = dyn_cast<PHINode>(V);
   if (!Phi || !V->getType()->isPointerTy() || Phi->getNumIncomingValues() != 2)
@@ -171,8 +172,8 @@ static Value *findInvariantPointerBaseImpl(Value *V, const Instruction *CtxI,
     if (Incoming == V)
       return nullptr;
 
-    if (Value *Recovered = findInvariantPointerBaseImpl(Incoming, CtxI, L, SE,
-                                                        Visited))
+    if (Value *Recovered =
+            findInvariantPointerBaseImpl(Incoming, CtxI, L, SE, Visited))
       return Recovered;
 
     return Incoming;
@@ -185,9 +186,12 @@ static Value *findInvariantPointerBaseImpl(Value *V, const Instruction *CtxI,
 bool polly::matchNoGrowBackInserterCheck(ICmpInst &ICmp, Loop *L,
                                          ScalarEvolution &SE,
                                          const SCEV *&RemainingBytes,
-                                         const SCEV *&SourceSpanBytes) {
+                                         const SCEV *&SourceSpanBytes,
+                                         bool *NoGrowWhenTrue) {
   RemainingBytes = nullptr;
   SourceSpanBytes = nullptr;
+  if (NoGrowWhenTrue)
+    *NoGrowWhenTrue = false;
 
   if (!L)
     return false;
@@ -199,11 +203,15 @@ bool polly::matchNoGrowBackInserterCheck(ICmpInst &ICmp, Loop *L,
   case ICmpInst::ICMP_ULE:
     Current = ICmp.getOperand(0);
     Capacity = ICmp.getOperand(1);
+    if (NoGrowWhenTrue)
+      *NoGrowWhenTrue = true;
     break;
   case ICmpInst::ICMP_UGT:
   case ICmpInst::ICMP_UGE:
     Current = ICmp.getOperand(1);
     Capacity = ICmp.getOperand(0);
+    if (NoGrowWhenTrue)
+      *NoGrowWhenTrue = true;
     break;
   default:
     return false;
@@ -222,7 +230,8 @@ bool polly::matchNoGrowBackInserterCheck(ICmpInst &ICmp, Loop *L,
   if (!InitialCurrent || !InitialCapacity)
     return false;
   InitialCurrent = resolveNonNullPointerPhiIncoming(InitialCurrent, &ICmp, SE);
-  InitialCapacity = resolveNonNullPointerPhiIncoming(InitialCapacity, &ICmp, SE);
+  InitialCapacity =
+      resolveNonNullPointerPhiIncoming(InitialCapacity, &ICmp, SE);
 
   RemainingBytes = getPointerSpanInBytes(InitialCurrent, InitialCapacity, SE);
   SourceSpanBytes = getLoopSourceSpanBytes(L, SE);

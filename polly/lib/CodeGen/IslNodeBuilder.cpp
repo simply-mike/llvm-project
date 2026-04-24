@@ -1429,10 +1429,9 @@ Value *IslNodeBuilder::createRTC(isl_ast_expr *Condition) {
   if (!RTC->getType()->isIntegerTy(1))
     RTC = Builder.CreateIsNotNull(RTC);
   Value *OverflowHappened =
-      NeedsWideIntRTC
-          ? Builder.getTrue()
-          : Builder.CreateNot(ExprBuilder.getOverflowState(),
-                              "polly.rtc.overflown");
+      NeedsWideIntRTC ? Builder.getTrue()
+                      : Builder.CreateNot(ExprBuilder.getOverflowState(),
+                                          "polly.rtc.overflown");
 
   if (PollyGenerateRTCPrint) {
     auto *F = Builder.GetInsertBlock()->getParent();

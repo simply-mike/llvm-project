@@ -492,8 +492,15 @@ bool ScopBuilder::buildConditionSets(
     assert(ICond &&
            "Condition of exiting branch was neither constant nor ICmp!");
 
-    if (isKnownNoGrowBackInserterBranch(*ICond, L, SE)) {
-      ConsequenceCondSet = isl_set_universe(isl_set_get_space(Domain));
+    bool NoGrowWhenTrue = false;
+    const SCEV *RemainingBytes = nullptr;
+    const SCEV *SourceSpanBytes = nullptr;
+    if (matchNoGrowBackInserterCheck(*ICond, L, SE, RemainingBytes,
+                                     SourceSpanBytes, &NoGrowWhenTrue) &&
+        isKnownNoGrowBackInserterBranch(*ICond, L, SE)) {
+      ConsequenceCondSet = NoGrowWhenTrue
+                               ? isl_set_universe(isl_set_get_space(Domain))
+                               : isl_set_empty(isl_set_get_space(Domain));
     } else {
       Region &R = scop->getRegion();
 
@@ -539,10 +546,10 @@ bool ScopBuilder::buildConditionSets(
         default:
           LHS = getPwAff(BB, InvalidDomainMap, LeftOperand, NonNeg);
           RHS = getPwAff(BB, InvalidDomainMap, RightOperand, NonNeg);
-          ConsequenceCondSet = buildConditionSet(ICond->getPredicate(),
-                                                 isl::manage(LHS),
-                                                 isl::manage(RHS))
-                                   .release();
+          ConsequenceCondSet =
+              buildConditionSet(ICond->getPredicate(), isl::manage(LHS),
+                                isl::manage(RHS))
+                  .release();
           break;
         }
       }
@@ -1716,12 +1723,10 @@ bool ScopBuilder::buildAccessSingleDim(MemAccInst Inst, ScopStmt *Stmt) {
       dyn_cast<SCEVUnknown>(SE.getPointerBase(AccessFunction));
 
   if (BasePointer) {
-    if (Value *RecoveredBase =
-            findInvariantPointerBase(BasePointer->getValue(), Inst.get(),
-                                     AccessLoop, SE)) {
-      if (auto *RecoveredBaseSCEV =
-              dyn_cast<SCEVUnknown>(SE.getPointerBase(SE.getSCEVAtScope(
-                  RecoveredBase, AccessLoop))))
+    if (Value *RecoveredBase = findInvariantPointerBase(
+            BasePointer->getValue(), Inst.get(), AccessLoop, SE)) {
+      if (auto *RecoveredBaseSCEV = dyn_cast<SCEVUnknown>(
+              SE.getPointerBase(SE.getSCEVAtScope(RecoveredBase, AccessLoop))))
         BasePointer = RecoveredBaseSCEV;
     }
   }
@@ -2489,12 +2494,14 @@ void ScopBuilder::addPHIReadAccess(ScopStmt *PHIStmt, PHINode *PHI) {
                   MemoryKind::PHI);
 }
 
-static bool getAffineAccessIterationOffsets(ScopStmt &Stmt, MemoryAccess &Access,
+static bool getAffineAccessIterationOffsets(ScopStmt &Stmt,
+                                            MemoryAccess &Access,
                                             SmallVectorImpl<int64_t> &Offsets) {
   if (!Access.isArrayKind() || !Access.isAffine())
     return false;
 
-  isl::map AccessRel = Access.getAddressFunction().intersect_domain(Stmt.getDomain());
+  isl::map AccessRel =
+      Access.getAddressFunction().intersect_domain(Stmt.getDomain());
   if (AccessRel.is_empty())
     return false;
 
@@ -2646,7 +2653,8 @@ void ScopBuilder::buildCompactionPatternInfo(ScopStmt &Stmt) {
 
   for (MemoryAccess *Access : Stmt) {
     if (Access->isArrayKind()) {
-      isl::map AccessRel = Access->getAccessRelation().intersect_domain(Stmt.getDomain());
+      isl::map AccessRel =
+          Access->getAccessRelation().intersect_domain(Stmt.getDomain());
       if (Access->isRead() && Access->isAffine() &&
           AccessRel.domain().is_equal(Stmt.getDomain()))
         HasAffineInputRead = true;
@@ -2669,9 +2677,8 @@ void ScopBuilder::buildCompactionPatternInfo(ScopStmt &Stmt) {
       HasScalarWrite = true;
   }
 
-  bool IsCompactionLike =
-      HasAffineInputRead && HasWildcardMayWrite && HasScalarRead &&
-      HasScalarWrite;
+  bool IsCompactionLike = HasAffineInputRead && HasWildcardMayWrite &&
+                          HasScalarRead && HasScalarWrite;
   Stmt.setCompactionLikePattern(IsCompactionLike);
 
   POLLY_DEBUG({

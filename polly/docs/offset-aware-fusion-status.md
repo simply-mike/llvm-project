@@ -115,7 +115,7 @@ source-level fusion cases now enter `polly.start` through a real
 
 ### Lowered IR
 
-These are considered solid:
+The baseline contains focused lowered-IR regressions for the main mechanisms:
 
 - [`test/ScheduleOptimizer/offset-aware-fusion.ll`](../test/ScheduleOptimizer/offset-aware-fusion.ll)
 - [`test/ScheduleOptimizer/offset-aware-compaction.ll`](../test/ScheduleOptimizer/offset-aware-compaction.ll)
@@ -123,8 +123,13 @@ These are considered solid:
 - [`test/ScopInfo/inttoptr-phi-iterator.ll`](../test/ScopInfo/inttoptr-phi-iterator.ll)
 - [`test/CodeGen/offset-aware-fusion-live-rtc.ll`](../test/CodeGen/offset-aware-fusion-live-rtc.ll)
 
-On the current RISC-V build these still give the expected schedule/codegen
-shape, and the live-RTC codegen test passes through `polly-codegen + verify`.
+After moving this branch back to the RISC-V validation baseline, the full
+`check-polly` suite is not yet green on this historical point. The current
+manual audit found 22 lit failures in the baseline state, mostly around stale
+regression expectations and stabilization work that was later developed on the
+experimental branch. Those later changes are preserved on
+`llvm-polly-research-experimental`; they should be split carefully before being
+reintroduced here.
 
 ### Source-level friendly source cases
 
@@ -166,6 +171,56 @@ Not yet finished:
 - full source-level fusion of pipelines such as
   `fill / transform / copy_if(back_inserter)` into one larger SCoP
 - general support for compaction / append / grow patterns
+
+Current branch policy:
+
+- this branch is kept as the non-experimental RISC-V-focused baseline for the
+  currently selected size-stable offset-fusion class
+- later class expansions and compaction experiments are kept on
+  `llvm-polly-research-experimental`
+- personal diary-style notes are intentionally not tracked in this branch
+
+## Correctness Audit Notes
+
+The manual audit of the baseline patch-set focused on transformations that
+could change program semantics, not only on missed fusion opportunities.
+
+Scheduler-side offset-aware fusion is comparatively low risk: it adds proximity
+and constant-shift opportunities, but validity dependences still constrain the
+resulting schedule. In other words, the scheduler is encouraged to place
+compatible statements together, but it is not allowed to violate computed
+dependences.
+
+The riskier area is no-growth append handling in `CodePreparation` and
+`ScopBuilder`. This branch now records which successor of a recognized
+no-growth comparison is the fast path instead of assuming `successor(0)` is
+always the no-growth path. The same polarity information is used when
+`ScopBuilder` turns a proven no-growth branch condition into a domain shortcut.
+
+Validation performed on this branch:
+
+```bash
+python3 utils/check_stl_like_fusion.py \
+  --strict \
+  --example all \
+  --opt /Users/mike/Coding/llvm-project/build-rv-polly/bin/opt \
+  --clangxx /Users/mike/Coding/llvm-project/build-rv-polly/bin/clang++ \
+  --target riscv64-unknown-elf \
+  --sysroot /opt/homebrew/Cellar/riscv-gnu-toolchain/main/riscv64-unknown-elf \
+  --gcc-toolchain /opt/homebrew/opt/riscv-gnu-toolchain
+```
+
+Observed result:
+
+- `iota_transform_replace_copy`: `PASS`
+- `three_transform`: `PASS`
+- `pointer`: `PASS`
+- `vector`: `FAIL`, still the expected frontier around
+  `copy_if(back_inserter)` / compaction-style lowering
+
+Full `check-polly` was also run on this branch. It currently reports 22 failed
+lit tests on top of the expected unsupported/XFAIL tests. This is a branch
+hygiene blocker before claiming the baseline is fully regression-clean.
 
 ## Remaining Boundary
 

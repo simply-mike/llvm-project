@@ -728,8 +728,9 @@ static bool canMoveSequenceNodeBefore(isl::schedule_node EarlierNode,
   return Violations.is_empty();
 }
 
-static void hoistMovableZeroDimStmts(
-    SmallVectorImpl<isl::schedule_node> &Children, const isl::union_map &Deps) {
+static void
+hoistMovableZeroDimStmts(SmallVectorImpl<isl::schedule_node> &Children,
+                         const isl::union_map &Deps) {
   for (int InitIdx = 0, End = Children.size(); InitIdx < End; ++InitIdx) {
     if (!isHoistableZeroDimStmtNode(Children[InitIdx]))
       continue;
@@ -738,9 +739,8 @@ static void hoistMovableZeroDimStmts(
                        << "before greedy fusion\n");
 
     int NewPos = InitIdx;
-    while (NewPos > 0 &&
-           canMoveSequenceNodeBefore(Children[NewPos - 1], Children[InitIdx],
-                                     Deps))
+    while (NewPos > 0 && canMoveSequenceNodeBefore(Children[NewPos - 1],
+                                                   Children[InitIdx], Deps))
       --NewPos;
 
     if (NewPos == InitIdx)
@@ -748,8 +748,7 @@ static void hoistMovableZeroDimStmts(
 
     POLLY_DEBUG({
       dbgs() << "Hoisting zero-dimensional statement across "
-             << (InitIdx - NewPos)
-             << " sequence nodes before greedy fusion\n";
+             << (InitIdx - NewPos) << " sequence nodes before greedy fusion\n";
     });
 
     isl::schedule_node InitNode = Children[InitIdx];
@@ -852,9 +851,8 @@ static std::optional<int64_t>
 getConstantFuseShift(const isl::union_map &LHSPartSched,
                      const isl::union_map &RHSPartSched,
                      const isl::union_map &Deps) {
-  isl::union_map CrossDeps =
-      Deps.intersect_domain(LHSPartSched.domain()).intersect_range(
-          RHSPartSched.domain());
+  isl::union_map CrossDeps = Deps.intersect_domain(LHSPartSched.domain())
+                                 .intersect_range(RHSPartSched.domain());
   if (CrossDeps.is_empty())
     return std::nullopt;
 

@@ -32,8 +32,8 @@
 #include "llvm/Pass.h"
 #include "isl/isl-noexceptions.h"
 #include <cassert>
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
 #include <forward_list>
 #include <optional>
 
@@ -1326,7 +1326,9 @@ public:
   }
 
   bool hasCompactionLikePattern() const { return HasCompactionLikePattern; }
-  void setCompactionLikePattern(bool Value) { HasCompactionLikePattern = Value; }
+  void setCompactionLikePattern(bool Value) {
+    HasCompactionLikePattern = Value;
+  }
 
   /// Get the schedule function of this ScopStmt.
   ///

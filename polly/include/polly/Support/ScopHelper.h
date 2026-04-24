@@ -113,7 +113,8 @@ void recordAssumption(RecordedAssumptionsTy *RecordedAssumptions,
 bool matchNoGrowBackInserterCheck(llvm::ICmpInst &ICmp, llvm::Loop *L,
                                   llvm::ScalarEvolution &SE,
                                   const llvm::SCEV *&RemainingBytes,
-                                  const llvm::SCEV *&SourceSpanBytes);
+                                  const llvm::SCEV *&SourceSpanBytes,
+                                  bool *NoGrowWhenTrue = nullptr);
 
 /// Recognize canonical pointer-iterator loop latch conditions of the form
 /// `next_ptr == end_ptr` where `next_ptr` is a constant-step increment of a
@@ -123,10 +124,9 @@ bool matchNoGrowBackInserterCheck(llvm::ICmpInst &ICmp, llvm::Loop *L,
 /// pointer span rather than an integer induction variable. If
 /// @p BackedgeTakenCount is provided, it receives the equivalent byte-span
 /// based backedge count.
-bool matchPointerIteratorLoopTripCount(llvm::ICmpInst &ICmp, llvm::Loop *L,
-                                       llvm::ScalarEvolution &SE,
-                                       const llvm::SCEV **BackedgeTakenCount =
-                                           nullptr);
+bool matchPointerIteratorLoopTripCount(
+    llvm::ICmpInst &ICmp, llvm::Loop *L, llvm::ScalarEvolution &SE,
+    const llvm::SCEV **BackedgeTakenCount = nullptr);
 
 /// Recover an invariant pointer seed for a loop-carried pointer value.
 ///
@@ -135,8 +135,7 @@ bool matchPointerIteratorLoopTripCount(llvm::ICmpInst &ICmp, llvm::Loop *L,
 /// object itself is still rooted in a loop-invariant base pointer.
 llvm::Value *findInvariantPointerBase(llvm::Value *V,
                                       const llvm::Instruction *CtxI,
-                                      llvm::Loop *L,
-                                      llvm::ScalarEvolution &SE);
+                                      llvm::Loop *L, llvm::ScalarEvolution &SE);
 
 /// Return true if the no-grow check described by
 /// `matchNoGrowBackInserterCheck` is already known to hold in the current
