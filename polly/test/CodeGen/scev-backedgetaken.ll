@@ -1,4 +1,7 @@
 ; RUN: opt %loadNPMPolly -passes=polly-codegen -S < %s | FileCheck %s
+; RUN: opt %loadNPMPolly -passes=polly-codegen \
+; RUN:   -polly-disable-fallback-vectorization=false -S < %s | \
+; RUN:   FileCheck %s --check-prefix=NO-DISABLE
 ;
 ; llvm.org/PR48422
 ; Use of ScalarEvolution in Codegen not possible because DominatorTree is not updated.
@@ -49,3 +52,6 @@ for.cond.cleanup.loopexit:
 ; CHECK:       !3 = distinct !{!3, !4, !"polly.alias.scope.MemRef_d"}
 ; CHECK:       !4 = distinct !{!4, !"polly.alias.scope.domain"}
 ; CHECK:       !5 = !{}
+
+; NO-DISABLE-LABEL: @func(
+; NO-DISABLE-NOT: llvm.loop.vectorize.enable", i32 0

@@ -13,11 +13,21 @@ INPUTS = ROOT / "test" / "Inputs"
 
 
 EXAMPLES = {
+    "four_transform": {
+        "source": INPUTS / "stl_like_offset_four_transform.cpp",
+        "description": "Four std::transform passes with small constant offsets",
+        "require_offset": True,
+        "require_compaction": False,
+        "min_fused_stmts": 4,
+        "require_codegen": True,
+        "require_codegen_rtc": False,
+    },
     "iota_transform_replace_copy": {
         "source": INPUTS / "stl_like_offset_iota_transform_replace_copy.cpp",
         "description": "std::iota + std::transform + std::replace_copy pipeline",
         "require_offset": True,
         "require_compaction": False,
+        "require_codegen": True,
         "min_fused_stmts": 3,
         "require_codegen_rtc": True,
     },
@@ -26,6 +36,7 @@ EXAMPLES = {
         "description": "Three std::transform passes with small constant offsets",
         "require_offset": True,
         "require_compaction": False,
+        "require_codegen": True,
         "min_fused_stmts": 3,
         "require_codegen_rtc": False,
     },
@@ -34,6 +45,7 @@ EXAMPLES = {
         "description": "Standard-library algorithms over raw pointers",
         "require_offset": True,
         "require_compaction": False,
+        "require_codegen": True,
         "min_fused_stmts": 2,
         "require_codegen_rtc": False,
     },
@@ -46,6 +58,13 @@ EXAMPLES = {
         "require_codegen_rtc": False,
     },
 }
+
+DEFAULT_EXAMPLES = [
+    "four_transform",
+    "iota_transform_replace_copy",
+    "three_transform",
+    "pointer",
+]
 
 DEFAULT_CXXFLAGS = [
     "-O1",
@@ -242,7 +261,8 @@ def evaluate(
             "artifacts": {"compile.txt": out + err},
         }
 
-    polly = run_polly(opt, plugin, ll_path, info["require_codegen_rtc"])
+    run_codegen = info.get("require_codegen", False) or info["require_codegen_rtc"]
+    polly = run_polly(opt, plugin, ll_path, run_codegen)
     artifacts = {
         "compile.txt": out + err,
         "scops.txt": polly["scops"][1],
@@ -329,13 +349,7 @@ def main():
     )
     parser.add_argument(
         "--example",
-        choices=[
-            "iota_transform_replace_copy",
-            "three_transform",
-            "pointer",
-            "vector",
-            "all",
-        ],
+        choices=sorted(list(EXAMPLES.keys()) + ["all"]),
         default="all",
     )
     parser.add_argument("--keep-dir", default="")
@@ -352,7 +366,7 @@ def main():
     )
     args = parser.parse_args()
 
-    selected = EXAMPLES.keys() if args.example == "all" else [args.example]
+    selected = DEFAULT_EXAMPLES if args.example == "all" else [args.example]
 
     if args.keep_dir:
         workdir = pathlib.Path(args.keep_dir).resolve()

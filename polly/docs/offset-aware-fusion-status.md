@@ -42,13 +42,14 @@ The currently supported target class is:
 
 Good examples:
 
-- multiple `std::transform` passes
-- `std::copy` / `std::transform` / `std::copy`
+- multiple `std::transform` passes, including longer chains
 - `std::iota` / `std::transform` / `std::replace_copy`
 
 Still difficult:
 
 - `std::copy_if(..., std::back_inserter(...))`
+- copy/fill chains that lower to `memcpy` / `memmove` / `memset` and need
+  typed expansion before they can participate in the same fused band
 - more generally compaction / append / grow patterns
 
 ## What Was Implemented
@@ -138,21 +139,26 @@ Confirmed on RISC-V:
 - [`test/Inputs/stl_like_offset_three_transform.cpp`](../test/Inputs/stl_like_offset_three_transform.cpp)
   - strict harness: `PASS`
   - fused band on 3 statements
+- [`test/Inputs/stl_like_offset_four_transform.cpp`](../test/Inputs/stl_like_offset_four_transform.cpp)
+  - strict harness: `PASS`
+  - fused band on 4 statements
+  - `polly-codegen + verify`: `PASS`
 - [`test/Inputs/stl_like_offset_iota_transform_replace_copy.cpp`](../test/Inputs/stl_like_offset_iota_transform_replace_copy.cpp)
   - strict harness: `PASS`
   - fused band on 3 statements
   - live `%polly.rtc.result` in codegen
 - [`test/Inputs/stl_like_offset_pointer.cpp`](../test/Inputs/stl_like_offset_pointer.cpp)
   - strict harness: `PASS`
-  - fused band on 2 statements
+  - fused band on 3 statements
 
 ### Difficult source-level case
 
 - [`test/Inputs/stl_like_offset_vector.cpp`](../test/Inputs/stl_like_offset_vector.cpp)
 
-This still does not match the desired `copy_if/back_inserter` compaction shape.
-It is testable on RISC-V now, but the strict integration check still does not
-observe the expected compaction signal or the desired fused result.
+This is still treated as a frontier case rather than part of the supported
+size-stable class. It is testable on RISC-V and the current strict harness
+observes a compaction signal, but that does not amount to general support for
+`copy_if(back_inserter)` / append / grow patterns.
 
 ## Current Status
 
@@ -212,11 +218,95 @@ python3 utils/check_stl_like_fusion.py \
 
 Observed result:
 
+- `four_transform`: `PASS`
 - `iota_transform_replace_copy`: `PASS`
 - `three_transform`: `PASS`
 - `pointer`: `PASS`
-- `vector`: `FAIL`, still the expected frontier around
-  `copy_if(back_inserter)` / compaction-style lowering
+
+For the supported size-stable examples, the preserved harness artifacts also
+confirm the expected IR transition:
+
+- the input `<example>.ll` emitted by `clang++ -emit-llvm` does not contain
+  Polly-generated blocks such as `polly.start` or `polly.stmt`
+- the optimized `optimized.ll` emitted after
+  `polly-prepare,scop(polly-opt-isl,polly-codegen),verify` contains the
+  generated Polly path and passes LLVM IR verification
+
+## Preliminary Host Benchmarking
+
+The current host benchmark compares two versions of the same source-level
+kernel:
+
+- `no_polly.ll`: baseline LLVM optimization with no Polly-generated blocks
+- `polly_optimized.ll`: Polly codegen path after offset-aware fusion, then the
+  same backend optimization level
+
+The benchmark harness is:
+
+- [`utils/benchmark_stl_like_fusion.py`](../utils/benchmark_stl_like_fusion.py)
+
+The host runs are intentionally local and mechanical, not a final performance
+study. The default Polly codegen behavior still disables vectorization metadata
+on fallback loops. This is useful as a conservative default, but it can poison
+later cleanup/vectorization when the optimized path is simplified.
+
+```bash
+utils/benchmark_stl_like_fusion.py \
+  --case all \
+  --size 262144 \
+  --repeats 9 \
+  --warmups 2 \
+  --allow-fallback-vectorization \
+  --keep-dir /private/tmp/polly-stl-bench-main-final \
+  --opt /Users/mike/Coding/llvm-project/build-rv-polly/bin/opt \
+  --clangxx /usr/bin/clang++
+```
+
+This confirmed the benchmarking setup:
+
+- baseline IR does not contain Polly blocks
+- Polly codegen IR does contain `polly.start` / `polly.stmt`
+- schedule dumps still show the expected fused bands
+- generated executables pass output-equivalence checks before timing
+
+On a freshly rebuilt `opt` from this branch, the supported main-branch cases
+are:
+
+- `four_transform`
+- `iota_transform_replace_copy`
+- `three_transform`
+- `pointer`
+
+With default fallback-vectorization disabling, the Polly path is still much
+slower because final loops carry `llvm.loop.vectorize.enable = false`. With
+`--allow-fallback-vectorization`, the pure transform-style cases recover
+backend vectorization and move close to parity:
+
+- `four_transform`, `N = 262144`: `speedup = 0.8956`
+- `iota_transform_replace_copy`, `N = 262144`: `speedup = 0.9784`
+- `three_transform`, `N = 262144`: `speedup = 1.1213`
+- `pointer`, `N = 262144`: `speedup = 1.0581`
+
+The first diagnostic runs point to downstream codegen issues rather than to a
+missing fusion signal:
+
+- for a pure `three_transform` chain, Polly codegen leaves
+  `llvm.loop.vectorize.enable = false` metadata on the final loops. With normal
+  host backend codegen, the baseline becomes vectorized while the Polly path
+  stays scalar. When backend vectorization is disabled for both sides, the two
+  versions become structurally similar and the timing gap mostly disappears.
+- copy/fill chains are intentionally not part of the current main-branch
+  supported set yet. On a freshly rebuilt `opt` from this branch, examples such
+  as `copy_transform_copy` do not form the desired 3-statement fused band; they
+  need the later typed `memcpy`/`memmove`/`memset` expansion work that is still
+  kept on the experimental branch.
+
+The current main branch therefore has a first performance control:
+`-polly-disable-fallback-vectorization=false`. This is not flipped as the
+global default yet. A focused regression was added in
+[`test/CodeGen/scev-backedgetaken.ll`](../test/CodeGen/scev-backedgetaken.ll):
+the default path still checks for vectorization-disabling metadata, while the
+new flag checks that this metadata is not emitted.
 
 Full `check-polly` was also run on this branch. It currently reports 22 failed
 lit tests on top of the expected unsupported/XFAIL tests. This is a branch
