@@ -31,10 +31,10 @@ exit:
 ; CHECK:      Function: inttoptr_phi_iterator
 ; CHECK-NEXT: Region: %loop---%exit
 ; CHECK:      Statements {
-; CHECK-NEXT: 	Stmt0
+; CHECK-NEXT: 	Stmt_loop
 ; CHECK-NEXT:             Domain :=
-; CHECK-NEXT:                 [p_0, p_1] -> { Stmt0[i0] : 0 <= i0 <= -2 + p_1 };
+; CHECK-NEXT:                 [base, n] -> { Stmt_loop[i0] : 0 <= i0 <= -2 + n };
 ; CHECK:                  ReadAccess :=	[Reduction Type: NONE] [Scalar: 0]
-; CHECK-NEXT:                 [p_0, p_1] -> { Stmt0[i0] -> MemRef0[i0] };
+; CHECK-NEXT:                 [base, n] -> { Stmt_loop[i0] -> MemRef_start_ptr[i0] };
 ; CHECK:                  MustWriteAccess :=	[Reduction Type: NONE] [Scalar: 0]
-; CHECK-NEXT:                 [p_0, p_1] -> { Stmt0[i0] -> MemRef0[i0] };
+; CHECK-NEXT:                 [base, n] -> { Stmt_loop[i0] -> MemRef_start_ptr[i0] };

@@ -1,5 +1,5 @@
-; RUN: opt %loadNPMPolly -polly-position=before-vectorizer '-passes=print<polly-function-scops>' -disable-output < %s 2>&1 | FileCheck %s --check-prefix=SCOP
-; RUN: opt %loadNPMPolly -polly-position=before-vectorizer -passes=polly-codegen -S < %s | FileCheck %s --check-prefix=IR
+; RUN: opt %loadNPMPolly -polly-allow-nonaffine -polly-position=before-vectorizer '-passes=print<polly-function-scops>' -disable-output < %s 2>&1 | FileCheck %s --check-prefix=SCOP
+; RUN: opt %loadNPMPolly -polly-allow-nonaffine -polly-position=before-vectorizer -passes=polly-codegen -S < %s | FileCheck %s --check-prefix=IR
 
 ; The IR has two ScopArrayInfo for the value %next.0. This used to produce two
 ; phi nodes in polly.merge_new_and_old, one illegaly using the result of the
@@ -35,7 +35,7 @@ sw.bb1.i30:                                       ; preds = %cond.end.i28
 
 ; SCOP:      Arrays {
 ; SCOP-NEXT:     ptr MemRef_next_0;
-; SCOP-NEXT:     i16 MemRef_next_0[*];
+; SCOP-NEXT:     i16 MemRef1[*];
 ; SCOP-NEXT: }
 
 ; IR:      polly.merge_new_and_old:

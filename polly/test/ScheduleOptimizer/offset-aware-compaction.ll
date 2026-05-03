@@ -1,5 +1,5 @@
 ; RUN: opt %loadNPMPolly -polly-process-unprofitable -polly-allow-nonaffine -polly-pattern-matching-based-opts=false -polly-postopts=0 -polly-force-offset-fusion=1 "-passes=scop(polly-opt-isl,print<polly-opt-isl>)" -disable-output < %s | FileCheck %s
-; RUN: opt %loadNPMPolly -polly-process-unprofitable -polly-allow-nonaffine -polly-force-offset-fusion=1 -polly-detect-compaction-patterns "-passes=print<polly-function-scops>" -disable-output < %s | FileCheck %s --check-prefix=SCOPS
+; RUN: opt %loadNPMPolly -polly-process-unprofitable -polly-allow-nonaffine -polly-force-offset-fusion=1 -polly-detect-compaction-patterns "-passes=print<polly-function-scops>" -disable-output < %s 2>&1 | FileCheck %s --check-prefix=SCOPS
 
 target datalayout = "e-p:64:64:64-i1:8:8-i8:8:8-i16:16:16-i32:32:32-i64:64:64-f32:32:32-f64:64:64-v64:64:64-v128:128:128-a0:0:64-s0:64:64-f80:128:128"
 
@@ -73,27 +73,26 @@ exit:
 }
 
 ; CHECK:      Calculated schedule:
-; CHECK-NEXT: domain: "[p_0] -> { Stmt8[i0] : 0 <= i0 < p_0; Stmt8[0] : p_0 <= 0; Stmt7[]; Stmt9[i0] : 0 <= i0 <= -2 + p_0; Stmt1[i0] : 0 <= i0 < p_0; Stmt5[i0] : 0 <= i0 <= -2 + p_0; Stmt10[i0] : 0 <= i0 <= -2 + p_0 }"
+; CHECK-NEXT: domain: "[N] -> { Stmt_for_copy_preheader[]; Stmt_for_copy[i0] : 0 <= i0 < N; Stmt_for_copy[0] : N <= 0; Stmt_for_transform_body[i0] : 0 <= i0 <= -2 + N; Stmt_for_copy_latch[i0] : 0 <= i0 <= -2 + N; Stmt_for_copy_body__TO__for_copy_latch[i0] : 0 <= i0 <= -2 + N; Stmt_for_fill_body[i0] : 0 <= i0 < N }"
 ; CHECK-NEXT: child:
 ; CHECK-NEXT:   sequence:
-; CHECK-NEXT:   - filter: "[p_0] -> { Stmt7[] }"
+; CHECK-NEXT:   - filter: "[N] -> { Stmt_for_copy_preheader[] }"
+; CHECK-NEXT:   - filter: "[N] -> { Stmt_for_copy_latch[i0]; Stmt_for_copy_body__TO__for_copy_latch[i0]; Stmt_for_transform_body[i0]; Stmt_for_copy[i0]; Stmt_for_fill_body[i0] }"
 ; CHECK-NEXT:     child:
-; CHECK-NEXT:   - filter: "[p_0] -> { Stmt1[i0]; Stmt9[i0]; Stmt10[i0]; Stmt5[i0]; Stmt8[i0] }"
-; CHECK-NEXT:     child:
-; CHECK-NEXT:       schedule: "[p_0] -> [{ Stmt1[i0] -> [(i0)]; Stmt9[i0] -> [(i0)]; Stmt10[i0] -> [(i0)]; Stmt5[i0] -> [(1 + i0)]; Stmt8[i0] -> [(i0)] }]"
+; CHECK-NEXT:       schedule: "[N] -> [{ Stmt_for_copy_latch[i0] -> [(i0)]; Stmt_for_copy_body__TO__for_copy_latch[i0] -> [(i0)]; Stmt_for_transform_body[i0] -> [(1 + i0)]; Stmt_for_copy[i0] -> [(i0)]; Stmt_for_fill_body[i0] -> [(i0)] }]"
 ; CHECK-NEXT:       child:
 ; CHECK-NEXT:         sequence:
-; CHECK-NEXT:         - filter: "[p_0] -> { Stmt1[i0] }"
-; CHECK-NEXT:         - filter: "[p_0] -> { Stmt5[i0] }"
-; CHECK-NEXT:         - filter: "[p_0] -> { Stmt8[i0] }"
-; CHECK-NEXT:         - filter: "[p_0] -> { Stmt9[i0] }"
-; CHECK-NEXT:         - filter: "[p_0] -> { Stmt10[i0] }"
+; CHECK-NEXT:         - filter: "[N] -> { Stmt_for_fill_body[i0] }"
+; CHECK-NEXT:         - filter: "[N] -> { Stmt_for_transform_body[i0] }"
+; CHECK-NEXT:         - filter: "[N] -> { Stmt_for_copy[i0] }"
+; CHECK-NEXT:         - filter: "[N] -> { Stmt_for_copy_body__TO__for_copy_latch[i0] }"
+; CHECK-NEXT:         - filter: "[N] -> { Stmt_for_copy_latch[i0] }"
 
-; SCOPS:      Stmt5
+; SCOPS:      Stmt_for_transform_body
 ; SCOPS-NEXT:             Domain :=
-; SCOPS-NEXT:                 [p_0] -> { Stmt5[i0] : 0 <= i0 <= -2 + p_0 };
+; SCOPS-NEXT:                 [N] -> { Stmt_for_transform_body[i0] : 0 <= i0 <= -2 + N };
 ; SCOPS-NEXT:             Logical Domain :=
-; SCOPS-NEXT:                 [p_0] -> { Stmt5[i0] : 0 < i0 < p_0 };
-; SCOPS:      Stmt9
+; SCOPS-NEXT:                 [N] -> { Stmt_for_transform_body[i0] : 0 < i0 < N };
+; SCOPS:      Stmt_for_copy_body__TO__for_copy_latch
 ; SCOPS-NEXT:             Domain :=
 ; SCOPS:                  Compaction Pattern :=	copy-filter-like

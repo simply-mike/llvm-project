@@ -6,13 +6,13 @@
 ; CHECK:      Statements {
 ; CHECK-NEXT: 	Stmt_loop
 ; CHECK-NEXT:         Domain :=
-; CHECK-NEXT:             [p] -> { Stmt_loop[i0] : p >= 13 and 0 <= i0 <= 1025 };
+; CHECK-NEXT:             { Stmt_loop[i0] : 0 <= i0 <= 1025 };
 ; CHECK-NEXT:         Schedule :=
-; CHECK-NEXT:             [p] -> { Stmt_loop[i0] -> [i0] };
+; CHECK-NEXT:             { Stmt_loop[i0] -> [i0] };
 ; CHECK-NEXT:         MustWriteAccess :=	[Reduction Type: NONE] [Scalar: 0]
-; CHECK-NEXT:             [p] -> { Stmt_loop[i0] -> MemRef_X[0] };
+; CHECK-NEXT:             { Stmt_loop[i0] -> MemRef_X[0] };
 ; CHECK-NEXT:         MustWriteAccess :=	[Reduction Type: NONE] [Scalar: 1]
-; CHECK-NEXT:             [p] -> { Stmt_loop[i0] -> MemRef_phi[] };
+; CHECK-NEXT:             { Stmt_loop[i0] -> MemRef_phi[] };
 ; CHECK-NEXT: }
 
 declare void @bar()

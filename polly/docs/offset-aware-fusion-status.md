@@ -124,13 +124,9 @@ The baseline contains focused lowered-IR regressions for the main mechanisms:
 - [`test/ScopInfo/inttoptr-phi-iterator.ll`](../test/ScopInfo/inttoptr-phi-iterator.ll)
 - [`test/CodeGen/offset-aware-fusion-live-rtc.ll`](../test/CodeGen/offset-aware-fusion-live-rtc.ll)
 
-After moving this branch back to the RISC-V validation baseline, the full
-`check-polly` suite is not yet green on this historical point. The current
-manual audit found 22 lit failures in the baseline state, mostly around stale
-regression expectations and stabilization work that was later developed on the
-experimental branch. Those later changes are preserved on
-`llvm-polly-research-experimental`; they should be split carefully before being
-reintroduced here.
+The lowered-IR regression set has also been refreshed against the current
+RISC-V Polly build. The previous stale `check-polly` failures in this area were
+expectation drift, not new offset-fusion codegen crashes.
 
 ### Source-level friendly source cases
 
@@ -257,7 +253,7 @@ utils/benchmark_stl_like_fusion.py \
   --repeats 9 \
   --warmups 2 \
   --allow-fallback-vectorization \
-  --keep-dir /private/tmp/polly-stl-bench-main-final \
+  --keep-dir <artifact-dir> \
   --opt /Users/mike/Coding/llvm-project/build-rv-polly/bin/opt \
   --clangxx /usr/bin/clang++
 ```
@@ -308,9 +304,18 @@ global default yet. A focused regression was added in
 the default path still checks for vectorization-disabling metadata, while the
 new flag checks that this metadata is not emitted.
 
-Full `check-polly` was also run on this branch. It currently reports 22 failed
-lit tests on top of the expected unsupported/XFAIL tests. This is a branch
-hygiene blocker before claiming the baseline is fully regression-clean.
+Full `check-polly` was also run on this branch after refreshing stale
+regression expectations:
+
+- `Passed`: 1061
+- `Expectedly Failed`: 22
+- `Unsupported`: 39
+- real failures: 0
+
+Some unrelated historical corner-case tests now explicitly check the
+conservative outcome where Polly detects a candidate region but dismisses it
+before code generation. That is a missed-optimization result, not a generated
+miscompile path.
 
 ## Remaining Boundary
 

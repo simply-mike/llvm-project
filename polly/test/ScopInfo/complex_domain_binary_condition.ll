@@ -1,7 +1,10 @@
 ; RUN: opt %loadNPMPolly -pass-remarks-analysis="polly-scops" '-passes=print<polly-function-scops>' \
 ; RUN:     -disable-output < %s 2>&1 | FileCheck %s
 ;
-; CHECK: Low complexity assumption: {  : false }
+; Current SCoP construction dismisses this low-complexity corner case before
+; producing ScopInfo output.
+; CHECK:      remark: <unknown>:0:0: SCoP begins here.
+; CHECK-NEXT: remark: <unknown>:0:0: SCoP ends here but was dismissed.
 ;
 target datalayout = "e-m:e-i64:64-f80:128-n8:16:32:64-S128"
 

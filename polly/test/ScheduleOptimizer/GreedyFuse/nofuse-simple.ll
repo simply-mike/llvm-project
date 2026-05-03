@@ -1,5 +1,5 @@
-; RUN: opt %loadNPMPolly -polly-reschedule=0 -polly-loopfusion-greedy=1 -polly-postopts=0 '-passes=print<polly-opt-isl>' -disable-output < %s | FileCheck %s
-; RUN: opt %loadNPMPolly -polly-reschedule=1 -polly-loopfusion-greedy=1 -polly-postopts=0 '-passes=print<polly-opt-isl>' -disable-output < %s | FileCheck %s
+; RUN: opt %loadNPMPolly -polly-reschedule=0 -polly-loopfusion-greedy=1 -polly-postopts=0 '-passes=print<polly-opt-isl>' -disable-output < %s | FileCheck %s --check-prefix=RES0
+; RUN: opt %loadNPMPolly -polly-reschedule=1 -polly-loopfusion-greedy=1 -polly-postopts=0 '-passes=print<polly-opt-isl>' -disable-output < %s | FileCheck %s --check-prefix=RES1
 
 ; This could theoretically be fused by adjusting the offset of the second loop by %k (instead of relying on schedule dimensions).
 
@@ -47,5 +47,17 @@ return:
 }
 
 
-; CHECK:      Calculated schedule:
-; CHECK-NEXT: n/a
+; RES0:      Calculated schedule:
+; RES0-NEXT: n/a
+; RES1:      Calculated schedule:
+; RES1-NEXT: domain: "[n, k] -> { Stmt_body2[i0] : 0 <= i0 < n; Stmt_body1[i0] : 0 <= i0 < n }"
+; RES1-NEXT: child:
+; RES1-NEXT:   sequence:
+; RES1-NEXT:   - filter: "[n, k] -> { Stmt_body1[i0] }"
+; RES1-NEXT:     child:
+; RES1-NEXT:       schedule: "[n, k] -> [{ Stmt_body1[i0] -> [(i0)] }]"
+; RES1-NEXT:       permutable: 1
+; RES1-NEXT:       coincident: [ 1 ]
+; RES1-NEXT:   - filter: "[n, k] -> { Stmt_body2[i0] }"
+; RES1-NEXT:     child:
+; RES1-NEXT:       schedule: "[n, k] -> [{ Stmt_body2[i0] -> [(i0)] }]"

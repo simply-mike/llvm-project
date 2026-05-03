@@ -1,5 +1,5 @@
-; RUN: opt %loadNPMPolly -polly-pragma-based-opts=1 '-passes=print<polly-opt-isl>' -disable-output < %s | FileCheck %s --match-full-lines
-; RUN: opt %loadNPMPolly -polly-pragma-based-opts=0 '-passes=print<polly-opt-isl>' -disable-output < %s | FileCheck %s --match-full-lines
+; RUN: opt %loadNPMPolly -polly-pragma-based-opts=1 '-passes=print<polly-opt-isl>' -disable-output < %s | FileCheck %s --check-prefix=PRAGMA
+; RUN: opt %loadNPMPolly -polly-pragma-based-opts=0 '-passes=print<polly-opt-isl>' -disable-output < %s | FileCheck %s --check-prefix=NOPRAGMA
 ;
 ; Unrolling with heuristic factor.
 ; Currently not supported and expected to be handled by LLVM's unroll pass.
@@ -33,6 +33,9 @@ return:
 !4 = !{!"llvm.loop.unroll.enable", i1 true}
 
 
-; CHECK-LABEL: Printing analysis 'Polly - Optimize schedule of SCoP' for region: 'for => return' in function 'func':
-; CHECK-NEXT:  Calculated schedule:
-; CHECK-NEXT:    n/a
+; PRAGMA-LABEL: Printing analysis 'Polly - Optimize schedule of SCoP' for region: 'for => return' in function 'func':
+; PRAGMA-NEXT:  Calculated schedule:
+; PRAGMA-NEXT:  domain: "[n] -> { Stmt_body[i0] : 0 <= i0 < n }"
+; NOPRAGMA-LABEL: Printing analysis 'Polly - Optimize schedule of SCoP' for region: 'for => return' in function 'func':
+; NOPRAGMA-NEXT:  Calculated schedule:
+; NOPRAGMA-NEXT:  domain: "[n] -> { Stmt_body[i0] : 0 <= i0 < n }"

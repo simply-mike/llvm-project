@@ -44,4 +44,6 @@ return:
 
 ; OFF-LABEL: Printing analysis 'Polly - Optimize schedule of SCoP' for region: 'for => return' in function 'func':
 ; OFF-NEXT:  Calculated schedule:
-; OFF-NEXT:    n/a
+; OFF-NEXT:  domain: "[n] -> { Stmt_body[i0] : 0 <= i0 < n }"
+; OFF-NEXT:  child:
+; OFF-NEXT:    schedule: "[n] -> [{ Stmt_body[i0] -> [(i0)] }]"

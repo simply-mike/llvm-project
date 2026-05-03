@@ -34,10 +34,10 @@ exit:
 }
 
 ; CHECK:      Statements {
-; CHECK-NEXT: 	Stmt0
+; CHECK-NEXT: 	Stmt_for__TO__latch
 ; CHECK-NEXT:             Domain :=
 ; CHECK:                  Compaction Pattern :=	copy-filter-like
 ; CHECK:                  ReadAccess :=	[Reduction Type: NONE] [Scalar: 0]
-; CHECK-NEXT:                 [p_0] -> { Stmt0[i0] -> MemRef1[i0] };
+; CHECK-NEXT:                 [N] -> { Stmt_for__TO__latch[i0] -> MemRef_A[i0] };
 ; CHECK:                  MayWriteAccess :=	[Reduction Type: NONE] [Scalar: 0]
-; CHECK-NEXT:                 [p_0] -> { Stmt0[i0] -> MemRef2[o0] };
+; CHECK-NEXT:                 [N] -> { Stmt_for__TO__latch[i0] -> MemRef_B[o0] };

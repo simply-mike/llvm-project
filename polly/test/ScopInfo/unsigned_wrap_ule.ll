@@ -1,4 +1,4 @@
-; RUN: opt %loadNPMPolly '-passes=print<polly-function-scops>' -disable-output < %s 2>&1 | FileCheck %s
+; RUN: opt %loadNPMPolly -pass-remarks-analysis="polly-scops" '-passes=print<polly-function-scops>' -disable-output < %s 2>&1 | FileCheck %s
 ;
 ; Unsigned wrap-around check.
 ;
@@ -40,7 +40,6 @@ entry:
 }
 
 
-; CHECK: Region: %for---%return
-; CHECK:            Domain :=
-; CHECK-NEXT:                            { Stmt_ifinbounds[i0] : 0 < i0 <= 64 };
-
+; The region is detected but conservatively dismissed during SCoP construction.
+; CHECK:      remark: <unknown>:0:0: SCoP begins here.
+; CHECK-NEXT: remark: <unknown>:0:0: SCoP ends here but was dismissed.

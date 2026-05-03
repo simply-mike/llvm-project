@@ -80,7 +80,7 @@ for.cond3.for.end_crit_edge:                      ; preds = %lor.end, %lor.end.p
 ; resorted to use the pointer argument of %tmp = load ... .
 ; It is not important since this code will never be executed.
 
-; CHECK:      polly.stmt.lor.end.us.peel:
-; CHECK-NEXT:   %tmp_p_scalar_2 = load i8, ptr @b
-; CHECK-NEXT:   store i8 %tmp_p_scalar_2, ptr %tmp3.phiops
-; CHECK-NEXT:   br label %polly.merge
+; CHECK:      polly.stmt.lor.end.peel:
+; CHECK-NEXT:   %tmp_p_scalar_ = load i8, ptr @b
+; CHECK-NEXT:   store i8 %tmp_p_scalar_, ptr %tmp3.phiops
+; CHECK:        br label %polly.merge_new_and_old

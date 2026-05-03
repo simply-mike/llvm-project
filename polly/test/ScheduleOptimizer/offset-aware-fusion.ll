@@ -1,5 +1,5 @@
 ; RUN: opt %loadNPMPolly -polly-process-unprofitable -polly-pattern-matching-based-opts=false -polly-postopts=0 -polly-force-offset-fusion=1 "-passes=scop(polly-opt-isl,print<polly-opt-isl>)" -disable-output < %s | FileCheck %s
-; RUN: opt %loadNPMPolly -polly-process-unprofitable -polly-force-offset-fusion=1 "-passes=print<polly-function-scops>" -disable-output < %s | FileCheck %s --check-prefix=LOGICAL
+; RUN: opt %loadNPMPolly -polly-process-unprofitable -polly-force-offset-fusion=1 "-passes=print<polly-function-scops>" -disable-output < %s 2>&1 | FileCheck %s --check-prefix=LOGICAL
 
 define void @offset_fusion(ptr noalias nonnull %A, ptr noalias nonnull %B, i32 %n) {
 entry:
@@ -64,17 +64,17 @@ exit:
 }
 
 ; CHECK:      Calculated schedule:
-; CHECK-NEXT: domain: "[p_0] -> { Stmt9[i0] : 0 <= i0 <= -2 + p_0; Stmt1[i0] : 0 <= i0 < p_0; Stmt5[i0] : 0 <= i0 <= -2 + p_0 }"
+; CHECK-NEXT: domain: "[n] -> { Stmt_for_copy_body[i0] : 0 <= i0 <= -2 + n; Stmt_for_transform_body[i0] : 0 <= i0 <= -2 + n; Stmt_for_fill_body[i0] : 0 <= i0 < n }"
 ; CHECK-NEXT: child:
-; CHECK-NEXT:   schedule: "[p_0] -> [{ Stmt1[i0] -> [(i0)]; Stmt9[i0] -> [(i0)]; Stmt5[i0] -> [(1 + i0)] }]"
+; CHECK-NEXT:   schedule: "[n] -> [{ Stmt_for_copy_body[i0] -> [(i0)]; Stmt_for_transform_body[i0] -> [(1 + i0)]; Stmt_for_fill_body[i0] -> [(i0)] }]"
 ; CHECK-NEXT:   child:
 ; CHECK-NEXT:     sequence:
-; CHECK-NEXT:     - filter: "[p_0] -> { Stmt1[i0] }"
-; CHECK-NEXT:     - filter: "[p_0] -> { Stmt5[i0] }"
-; CHECK-NEXT:     - filter: "[p_0] -> { Stmt9[i0] }"
+; CHECK-NEXT:     - filter: "[n] -> { Stmt_for_fill_body[i0] }"
+; CHECK-NEXT:     - filter: "[n] -> { Stmt_for_transform_body[i0] }"
+; CHECK-NEXT:     - filter: "[n] -> { Stmt_for_copy_body[i0] }"
 
-; LOGICAL:      Stmt5
+; LOGICAL:      Stmt_for_transform_body
 ; LOGICAL-NEXT:            Domain :=
-; LOGICAL-NEXT:                [p_0] -> { Stmt5[i0] : 0 <= i0 <= -2 + p_0 };
+; LOGICAL-NEXT:                [n] -> { Stmt_for_transform_body[i0] : 0 <= i0 <= -2 + n };
 ; LOGICAL-NEXT:            Logical Domain :=
-; LOGICAL-NEXT:                [p_0] -> { Stmt5[i0] : 0 < i0 < p_0 };
+; LOGICAL-NEXT:                [n] -> { Stmt_for_transform_body[i0] : 0 < i0 < n };

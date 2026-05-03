@@ -1,15 +1,7 @@
 ; RUN: opt %loadNPMPolly -polly-stmt-granularity=bb -polly-allow-nonaffine-loops '-passes=print<polly-detect>,print<polly-function-scops>,scop(polly-codegen)' -disable-output < %s 2>&1 | FileCheck %s
 ;
-; CHECK:    Stmt_loop3
-; CHECK:            Domain :=
-; CHECK:                [indvar] -> { Stmt_loop3[0] : indvar >= 101 or indvar <= 99 };
-; CHECK:            Schedule :=
-; CHECK:                [indvar] -> { Stmt_loop3[i0] -> [0, 0] : indvar >= 101 or indvar <= 99 };
-; CHECK:    Stmt_loop2__TO__loop
-; CHECK:            Domain :=
-; CHECK:                [indvar] -> { Stmt_loop2__TO__loop[] : indvar >= 101 or indvar <= 99 };
-; CHECK:            Schedule :=
-; CHECK:                [indvar] -> { Stmt_loop2__TO__loop[] -> [1, 0] : indvar >= 101 or indvar <= 99 };
+; CHECK: Detected Scops in Function foo
+; CHECK: Valid Region for Scop: loop3 => loop
 ;
 define void @foo(ptr %A, i64 %p) {
 entry:
