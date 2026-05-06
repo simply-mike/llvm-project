@@ -879,6 +879,78 @@ static isl::union_map shiftOuterSchedule(isl::union_map PartSched,
   return PartSched.apply_range(isl::union_map(ShiftMap));
 }
 
+static isl::set getInteriorIterationRange(isl::union_map PartSched,
+                                          isl::union_set BandDomain) {
+  isl::set FullRange;
+  isl::set CommonRange;
+  unsigned NumParts = 0;
+
+  isl::union_map DomainSched = PartSched.intersect_domain(BandDomain);
+  DomainSched.domain().foreach_set([&](isl::set DomainPart) -> isl::stat {
+    isl::union_set RangeUSet =
+        DomainSched.intersect_domain(isl::union_set(DomainPart)).range();
+    isl::set Range;
+    RangeUSet.foreach_set([&](isl::set RangePart) -> isl::stat {
+      Range = Range.is_null() ? RangePart : Range.unite(RangePart);
+      return isl::stat::ok();
+    });
+    if (!Range.is_null())
+      Range = Range.coalesce();
+    if (Range.is_empty())
+      return isl::stat::ok();
+
+    if (FullRange.is_null()) {
+      FullRange = Range;
+      CommonRange = Range;
+    } else {
+      FullRange = FullRange.unite(Range);
+      CommonRange = CommonRange.intersect(Range);
+    }
+
+    ++NumParts;
+    return isl::stat::ok();
+  });
+
+  if (NumParts < 2 || FullRange.is_null() || CommonRange.is_null() ||
+      CommonRange.is_empty())
+    return {};
+
+  CommonRange = CommonRange.coalesce();
+  if (FullRange.is_equal(CommonRange))
+    return {};
+
+  return CommonRange;
+}
+
+/// Ask isl to outline the contiguous part of a one-dimensional fused band where
+/// every fused statement has an instance.  For offset-aware size-stable chains
+/// this peels small boundary slices such as i=0 or i=N-1 and leaves the hot
+/// interior loop without per-statement boundary guards.
+static isl::schedule_node_band
+isolateInteriorIterations(isl::schedule_node_band Band,
+                          isl::union_map PartSched) {
+  if (getNumScatterDims(PartSched) != 1)
+    return Band;
+
+  isl::set InteriorRange =
+      getInteriorIterationRange(PartSched, Band.get_domain());
+  if (InteriorRange.is_null())
+    return Band;
+
+  POLLY_DEBUG(dbgs() << "Isolating offset-aware interior iterations: "
+                     << stringFromIslObj(InteriorRange) << "\n");
+
+  isl::union_set ExistingOptions =
+      isl::manage(isl_schedule_node_band_get_ast_build_options(Band.get()));
+  isl::union_set IsolateOptions = getIsolateOptions(InteriorRange, 1);
+  IsolateOptions =
+      IsolateOptions.unite(getDimOptions(InteriorRange.ctx(), "atomic"));
+  if (!ExistingOptions.is_null())
+    IsolateOptions = ExistingOptions.unite(IsolateOptions);
+
+  return Band.set_ast_build_options(IsolateOptions);
+}
+
 /// Fuse @p LHS and @p RHS if possible while preserving validity dependenvies.
 static isl::schedule tryGreedyFuse(isl::schedule_node_band LHS,
                                    isl::schedule_node_band RHS,
@@ -890,10 +962,10 @@ static isl::schedule tryGreedyFuse(isl::schedule_node_band LHS,
   isl::union_map RHSPartOuterSched =
       RHS.get_partial_schedule().get_at(0).as_union_map();
 
-  int64_t AppliedShift = 0;
+  [[maybe_unused]] int64_t AppliedShift = 0;
   bool CanFuse = canFuseOutermost(LHSPartOuterSched, RHSPartOuterSched, Deps);
   if (!CanFuse && PollyForceOffsetFusion) {
-    // TODO: offset-aware fusion for STL patterns
+    // TODO: offset-aware fusion for standard-library-like loop patterns.
     if (std::optional<int64_t> Shift =
             getConstantFuseShift(LHSPartOuterSched, RHSPartOuterSched, Deps)) {
       isl::union_map ShiftedRHS = shiftOuterSchedule(RHSPartOuterSched, *Shift);
@@ -1089,6 +1161,20 @@ public:
     }
 
     return Result;
+  }
+};
+
+class OffsetInteriorIsolationRewriter final
+    : public ScheduleNodeRewriter<OffsetInteriorIsolationRewriter> {
+public:
+  isl::schedule_node visitBand(isl::schedule_node_band Band) {
+    isl::schedule_node Node = visitChildren(Band);
+    Band = Node.as<isl::schedule_node_band>();
+
+    isl::union_map PartSched =
+        isl::union_map::from(Band.get_partial_schedule());
+    Band = isolateInteriorIterations(Band, PartSched);
+    return Band;
   }
 };
 
@@ -1376,5 +1462,12 @@ isl::schedule polly::applyGreedyFusion(isl::schedule Sched,
 
   // GreedyFusionRewriter due to working loop-by-loop, bands with multiple loops
   // may have been split into multiple bands.
-  return collapseBands(Result);
+  Result = collapseBands(Result);
+
+  if (PollyForceOffsetFusion) {
+    OffsetInteriorIsolationRewriter IsolationRewriter;
+    Result = IsolationRewriter.visit(Result).get_schedule();
+  }
+
+  return Result;
 }

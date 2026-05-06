@@ -248,6 +248,15 @@ TEST(Isl, IslValToAPInt) {
   }
 
   {
+    auto IslExp = isl::val(IslCtx, 63);
+    auto IslSignedLimitPow2 = IslExp.pow2();
+    auto APSignedLimitPow2 = APIntFromVal(IslSignedLimitPow2);
+    EXPECT_TRUE(APSignedLimitPow2.isPowerOf2());
+    EXPECT_FALSE(APSignedLimitPow2.isNegative());
+    EXPECT_EQ(65u, APSignedLimitPow2.getBitWidth());
+  }
+
+  {
     auto IslExp = isl::val(IslCtx, 500);
     auto IslLargeNPow2 = IslExp.pow2().neg();
     auto APLargeNPow2 = APIntFromVal(IslLargeNPow2);

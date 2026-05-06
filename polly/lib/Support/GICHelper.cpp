@@ -55,6 +55,7 @@ APInt polly::APIntFromVal(__isl_take isl_val *Val) {
 
   assert(isl_val_is_int(Val) && "Only integers can be converted to APInt");
 
+  bool IsNegative = isl_val_is_neg(Val);
   NumChunks = isl_val_n_abs_num_chunks(Val, ChunkSize);
   Data = (uint64_t *)malloc(NumChunks * ChunkSize);
   isl_val_get_abs_num_chunks(Val, ChunkSize, Data);
@@ -66,7 +67,7 @@ APInt polly::APIntFromVal(__isl_take isl_val *Val) {
   // number. In case Val was originally negative, we expand the size of A by
   // one and negate the value (in two's complement representation). As a result,
   // the new value in A corresponds now with Val.
-  if (isl_val_is_neg(Val)) {
+  if (IsNegative) {
     A = A.zext(A.getBitWidth() + 1);
     A = -A;
   }
@@ -76,6 +77,10 @@ APInt polly::APIntFromVal(__isl_take isl_val *Val) {
   // signed value it contains, to ensure that the bitwidth is always minimal.
   if (A.getSignificantBits() < A.getBitWidth())
     A = A.trunc(A.getSignificantBits());
+  // Positive powers of two at a chunk boundary (for example 2^63) otherwise
+  // look like a negative signed APInt after truncation.
+  if (!IsNegative && A.isNegative())
+    A = A.zext(A.getBitWidth() + 1);
 
   free(Data);
   isl_val_free(Val);

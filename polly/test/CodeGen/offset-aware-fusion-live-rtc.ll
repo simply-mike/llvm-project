@@ -17,13 +17,15 @@ target triple = "riscv64-unknown-linux-gnu"
 ; CHECK: entry:
 ; CHECK-NEXT:   br label %polly.split_new_and_old
 ; CHECK: polly.split_new_and_old:
+; CHECK:   sext i64 {{.*}} to i65
+; CHECK:   icmp sge i65 {{.*}}, 9223372036854775808
 ; CHECK:   %polly.rtc.result = and i1
 ; CHECK-NEXT:   br i1 %polly.rtc.result, label %polly.start, label %entry.split.pre_entry_bb
 ; CHECK: polly.start:
 ; CHECK: polly.loop_header:
-; CHECK: polly.stmt.for.body.i:
+; CHECK: polly.stmt.for.body.i{{[0-9]+}}:
 ; CHECK: polly.stmt.for.body.i19:
-; CHECK: polly.stmt.for.body.i22:
+; CHECK: polly.stmt.for.body.i22{{[0-9]+}}:
 ; CHECK: attributes #0 = { {{.*}}"polly-optimized"{{.*}} }
 ; CHECK-NOT: br i1 false, label %polly.start
 

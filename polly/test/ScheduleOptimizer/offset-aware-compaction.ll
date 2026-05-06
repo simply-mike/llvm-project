@@ -80,6 +80,7 @@ exit:
 ; CHECK-NEXT:   - filter: "[N] -> { Stmt_for_copy_latch[i0]; Stmt_for_copy_body__TO__for_copy_latch[i0]; Stmt_for_transform_body[i0]; Stmt_for_copy[i0]; Stmt_for_fill_body[i0] }"
 ; CHECK-NEXT:     child:
 ; CHECK-NEXT:       schedule: "[N] -> [{ Stmt_for_copy_latch[i0] -> [(i0)]; Stmt_for_copy_body__TO__for_copy_latch[i0] -> [(i0)]; Stmt_for_transform_body[i0] -> [(1 + i0)]; Stmt_for_copy[i0] -> [(i0)]; Stmt_for_fill_body[i0] -> [(i0)] }]"
+; CHECK-NEXT:       options: "{{.*}}isolate{{.*}}0 < i0 <= -2 + N{{.*}}atomic{{.*}}"
 ; CHECK-NEXT:       child:
 ; CHECK-NEXT:         sequence:
 ; CHECK-NEXT:         - filter: "[N] -> { Stmt_for_fill_body[i0] }"

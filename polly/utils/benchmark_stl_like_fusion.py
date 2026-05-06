@@ -87,7 +87,7 @@ def count_max_fused_stmt_count(schedule_text):
 
 
 def has_polly_blocks(ir_text):
-    return "polly.start" in ir_text or "polly.stmt" in ir_text
+    return re.search(r"^polly[.$A-Za-z0-9_%-]*:", ir_text, re.MULTILINE) is not None
 
 
 def count_ir_instructions(ir_text):
@@ -184,6 +184,8 @@ def polly_flags(args):
     flags = list(BASE_POLLY_FLAGS)
     if args.allow_fallback_vectorization:
         flags.append("-polly-disable-fallback-vectorization=false")
+    if args.ignore_integer_wrapping:
+        flags.append("-polly-ignore-integer-wrapping")
     return flags
 
 
@@ -632,6 +634,15 @@ def main():
             "Pass -polly-disable-fallback-vectorization=false when running "
             "Polly codegen. This helps diagnose whether fallback loop metadata "
             "prevents later backend vectorization."
+        ),
+    )
+    parser.add_argument(
+        "--ignore-integer-wrapping",
+        action="store_true",
+        help=(
+            "Pass -polly-ignore-integer-wrapping when running Polly. This is "
+            "useful for diagnosing whether wrapping assumptions make the "
+            "runtime check fold to the fallback path before benchmarking."
         ),
     )
     parser.add_argument("--keep-dir", default="")
