@@ -43,8 +43,15 @@ The currently supported stable class is:
 Confirmed examples:
 
 - multiple `std::transform` passes, including 3-way and 4-way chains
+- `std::fill` + `std::transform` + `std::replace_copy` on RISC-V source
+  validation
+- `std::for_each` + `std::transform` + `std::transform`
 - `std::iota` + `std::transform` + `std::replace_copy`
+- `std::transform` + `std::replace_copy_if` + `std::transform`
+- `std::transform` + `std::replace_if` + `std::transform`
+- `std::transform` + `std::transform` + `std::replace_copy`
 - pointer-style lowered examples that keep affine, size-stable behavior
+- a mixed unary/binary `std::transform` chain with partial fused-band coverage
 
 Still outside the stable class:
 
@@ -142,13 +149,31 @@ Important lowered-IR regressions:
 
 Confirmed with the strict RISC-V harness:
 
+- [`test/Inputs/stl_like_offset_binary_transform.cpp`](../test/Inputs/stl_like_offset_binary_transform.cpp)
+  - `PASS`
+  - partial fused band on 2 statements
+- [`test/Inputs/stl_like_offset_fill_transform_replace_copy.cpp`](../test/Inputs/stl_like_offset_fill_transform_replace_copy.cpp)
+  - `PASS`
+  - fused band on 3 statements in the RISC-V source-level check
+- [`test/Inputs/stl_like_offset_for_each_transform.cpp`](../test/Inputs/stl_like_offset_for_each_transform.cpp)
+  - `PASS`
+  - fused band on 3 statements
 - [`test/Inputs/stl_like_offset_four_transform.cpp`](../test/Inputs/stl_like_offset_four_transform.cpp)
   - `PASS`
   - fused band on 4 statements
 - [`test/Inputs/stl_like_offset_iota_transform_replace_copy.cpp`](../test/Inputs/stl_like_offset_iota_transform_replace_copy.cpp)
   - `PASS`
   - fused band on 3 statements
+- [`test/Inputs/stl_like_offset_replace_copy_if.cpp`](../test/Inputs/stl_like_offset_replace_copy_if.cpp)
+  - `PASS`
+  - fused band on 3 statements
+- [`test/Inputs/stl_like_offset_replace_if.cpp`](../test/Inputs/stl_like_offset_replace_if.cpp)
+  - `PASS`
+  - fused band on 3 statements
 - [`test/Inputs/stl_like_offset_three_transform.cpp`](../test/Inputs/stl_like_offset_three_transform.cpp)
+  - `PASS`
+  - fused band on 3 statements
+- [`test/Inputs/stl_like_offset_transform_replace_copy.cpp`](../test/Inputs/stl_like_offset_transform_replace_copy.cpp)
   - `PASS`
   - fused band on 3 statements
 - [`test/Inputs/stl_like_offset_pointer.cpp`](../test/Inputs/stl_like_offset_pointer.cpp)
@@ -179,9 +204,15 @@ python3 utils/check_stl_like_fusion.py \
 
 Latest observed result:
 
+- `binary_transform`: `PASS`
+- `fill_transform_replace_copy`: `PASS`
+- `for_each_transform`: `PASS`
 - `four_transform`: `PASS`
 - `iota_transform_replace_copy`: `PASS`
+- `replace_copy_if`: `PASS`
+- `replace_if`: `PASS`
 - `three_transform`: `PASS`
+- `transform_replace_copy`: `PASS`
 - `pointer`: `PASS`
 
 Polly regression suite:
@@ -213,43 +244,118 @@ The harness also checks semantic equivalence before timing.
 Current command shape:
 
 ```bash
-python3 utils/benchmark_stl_like_fusion.py \
-  --case all \
-  --size 16384 \
-  --size 262144 \
-  --size 1048576 \
-  --repeats 11 \
-  --warmups 3 \
-  --allow-fallback-vectorization \
-  --diagnose \
-  --keep-dir <artifact-dir> \
-  --opt /Users/mike/Coding/llvm-project/build-rv-polly/bin/opt \
-  --clangxx /usr/bin/clang++
+for run in 1 2 3 4 5; do
+  python3 utils/benchmark_stl_like_fusion.py \
+    --case all \
+    --size 4096 --size 8192 --size 16384 --size 32768 \
+    --size 65536 --size 131072 --size 262144 \
+    --size 524288 --size 1048576 \
+    --repeats 21 \
+    --warmups 5 \
+    --allow-fallback-vectorization \
+    --keep-dir <artifact-dir>/run-${run} \
+    --opt /Users/mike/Coding/llvm-project/build-rv-polly/bin/opt \
+    --clangxx /usr/bin/clang++ \
+    --frontend-clangxx /Users/mike/Coding/llvm-project/build-rv-polly/bin/clang++ \
+    --native-clangxx /usr/bin/clang++ \
+    --cxxflag=--target=arm64-apple-macosx26.0.0 \
+    --cxxflag=-isysroot \
+    --cxxflag=/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk
+done
 ```
+
+The committed CSV uses the median value across those five independent grid
+runs for each `(case, N)` point.
+
+Those repeated outputs can be aggregated with:
+
+```bash
+python3 utils/aggregate_stl_like_fusion_benchmarks.py \
+  <artifact-dir>/run-1.csv \
+  <artifact-dir>/run-2.csv \
+  <artifact-dir>/run-3.csv \
+  <artifact-dir>/run-4.csv \
+  <artifact-dir>/run-5.csv \
+  --mode median \
+  --out docs/offset-aware-fusion-benchmark-grid.csv
+```
+
+The latest grid data for plotting is stored in:
+
+- [`docs/offset-aware-fusion-benchmark-grid.csv`](offset-aware-fusion-benchmark-grid.csv)
+
+Generated benchmark plots:
+
+- [`docs/offset-aware-fusion-speedup-lines.svg`](offset-aware-fusion-speedup-lines.svg)
+- [`docs/offset-aware-fusion-speedup-summary.svg`](offset-aware-fusion-speedup-summary.svg)
+- [`docs/offset-aware-fusion-speedup-heatmap.svg`](offset-aware-fusion-speedup-heatmap.svg)
+
+They can be regenerated with:
+
+```bash
+python3 utils/plot_stl_like_fusion_benchmarks.py \
+  --csv docs/offset-aware-fusion-benchmark-grid.csv \
+  --out-dir docs
+```
+
+The benchmark now separates source lowering from native execution. The C++
+source-to-LLVM-IR frontend is the locally built `build-rv-polly/bin/clang++`,
+and Polly itself is run through the locally built `build-rv-polly/bin/opt`.
+Native object generation, assembly dumps, driver compilation, and linking still
+use `/usr/bin/clang++` because the current local LLVM build has no default
+native target backend (`clang++ --version` reports `Target: unknown`).
+
+The benchmark frontend intentionally uses `-fno-builtin` together with the other
+loop-preserving frontend flags. This prevents `std::fill` from becoming
+`llvm.experimental.memset.pattern` before Polly sees the code. That keeps the
+benchmark focused on the current typed-loop size-stable class; intrinsic
+expansion remains a separate future task.
 
 With the APInt/RTC fix, this no longer needs `--ignore-integer-wrapping` for the
 Polly path to survive final `O2`.
 
-Latest local host results:
+Latest local host benchmark results:
 
 | Case | N=16384 | N=262144 | N=1048576 |
 | ---- | ------- | -------- | --------- |
-| `four_transform` | `1.8102x` | `1.7550x` | `2.3721x` |
-| `iota_transform_replace_copy` | `1.6290x` | `1.7683x` | `1.7454x` |
-| `three_transform` | `1.3333x` | `1.4055x` | `1.6844x` |
-| `pointer` | `1.1188x` | `0.9406x` | `1.2287x` |
+| `binary_transform` | `1.4723x` | `1.3837x` | `1.3674x` |
+| `fill_transform_replace_copy` | `1.3904x` | `1.2890x` | `1.2481x` |
+| `four_transform` | `1.7569x` | `1.7143x` | `2.1616x` |
+| `for_each_transform` | `1.3370x` | `1.3239x` | `1.5524x` |
+| `iota_transform_replace_copy` | `1.6263x` | `1.6789x` | `1.3780x` |
+| `replace_copy_if` | `1.5418x` | `1.3327x` | `1.6088x` |
+| `replace_if` | `2.2683x` | `2.0769x` | `2.1553x` |
+| `three_transform` | `1.3332x` | `1.3279x` | `1.4075x` |
+| `transform_replace_copy` | `1.3584x` | `1.3126x` | `1.4688x` |
+| `pointer` | `1.3823x` | `1.3379x` | `1.3419x` |
 
 Diagnostic observations:
 
 - `polly_codegen_ir` contains the generated Polly path.
 - `polly_optimized_ir` still contains surviving `polly.*` blocks after
   `default<O2>`.
+- The expanded size-stable examples show real speedups in this local smoke run
+  without disabling integer-wrapping checks.
 - The main transform-style examples now show real speedups without disabling
   integer-wrapping checks.
 - The `pointer` case is still noisier and should not yet be used as the main
   performance claim.
+- The `binary_transform` case currently demonstrates partial mixed-chain fusion,
+  not full 3-way fusion of the whole sequence.
+- Without `-fno-builtin`, Apple host lowering turns the `std::fill` part of
+  `fill_transform_replace_copy` into `llvm.experimental.memset.pattern`, so
+  that case leaves the current typed-loop class before Polly can fuse it.
 - The benchmark executable checks baseline-vs-Polly output equivalence before
   collecting timings.
+- The previously suspicious `four_transform` spike at `N=16384` and the
+  `replace_if` dip around `N=32768` disappeared after aggregating five
+  independent grid runs. The median values are `1.7569x` and `2.1660x`,
+  respectively.
+- The speedup curve is not strictly monotonic. Some cases lose relative speedup
+  around larger `N` because execution becomes more memory-bandwidth-sensitive
+  and the Polly path still carries RTC/fallback/boundary code around the hot
+  fused loop. Other cases improve at larger `N` when reducing memory passes
+  dominates this scaffolding overhead.
 
 `--ignore-integer-wrapping` remains in the benchmark script only as a diagnostic
 flag for isolating wrapping-check behavior. It is not required for the current
@@ -270,9 +376,9 @@ done
 
 Verified files:
 
-- 4 cases
+- 10 host-benchmarkable cases
 - 5 IR stages per case
-- 20 LLVM IR files total
+- 50 LLVM IR files total
 
 Result:
 

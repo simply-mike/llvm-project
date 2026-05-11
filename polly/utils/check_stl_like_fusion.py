@@ -13,6 +13,24 @@ INPUTS = ROOT / "test" / "Inputs"
 
 
 EXAMPLES = {
+    "binary_transform": {
+        "source": INPUTS / "stl_like_offset_binary_transform.cpp",
+        "description": "Unary and binary std::transform passes with partial fusion",
+        "require_offset": True,
+        "require_compaction": False,
+        "min_fused_stmts": 2,
+        "require_codegen": True,
+        "require_codegen_rtc": False,
+    },
+    "fill_transform_replace_copy": {
+        "source": INPUTS / "stl_like_offset_fill_transform_replace_copy.cpp",
+        "description": "std::fill + std::transform + std::replace_copy",
+        "require_offset": True,
+        "require_compaction": False,
+        "min_fused_stmts": 3,
+        "require_codegen": True,
+        "require_codegen_rtc": False,
+    },
     "four_transform": {
         "source": INPUTS / "stl_like_offset_four_transform.cpp",
         "description": "Four std::transform passes with small constant offsets",
@@ -30,6 +48,15 @@ EXAMPLES = {
         "require_codegen": True,
         "min_fused_stmts": 3,
         "require_codegen_rtc": True,
+    },
+    "for_each_transform": {
+        "source": INPUTS / "stl_like_offset_for_each_transform.cpp",
+        "description": "std::for_each + std::transform + std::transform",
+        "require_offset": True,
+        "require_compaction": False,
+        "require_codegen": True,
+        "min_fused_stmts": 3,
+        "require_codegen_rtc": False,
     },
     "three_transform": {
         "source": INPUTS / "stl_like_offset_three_transform.cpp",
@@ -49,6 +76,33 @@ EXAMPLES = {
         "min_fused_stmts": 2,
         "require_codegen_rtc": False,
     },
+    "replace_copy_if": {
+        "source": INPUTS / "stl_like_offset_replace_copy_if.cpp",
+        "description": "std::transform + std::replace_copy_if + std::transform",
+        "require_offset": True,
+        "require_compaction": False,
+        "require_codegen": True,
+        "min_fused_stmts": 3,
+        "require_codegen_rtc": False,
+    },
+    "replace_if": {
+        "source": INPUTS / "stl_like_offset_replace_if.cpp",
+        "description": "std::transform + std::replace_if + std::transform",
+        "require_offset": True,
+        "require_compaction": False,
+        "require_codegen": True,
+        "min_fused_stmts": 3,
+        "require_codegen_rtc": False,
+    },
+    "transform_replace_copy": {
+        "source": INPUTS / "stl_like_offset_transform_replace_copy.cpp",
+        "description": "std::transform + std::transform + std::replace_copy",
+        "require_offset": True,
+        "require_compaction": False,
+        "require_codegen": True,
+        "min_fused_stmts": 3,
+        "require_codegen_rtc": False,
+    },
     "vector": {
         "source": INPUTS / "stl_like_offset_vector.cpp",
         "description": "std::vector + std::back_inserter pipeline",
@@ -60,9 +114,15 @@ EXAMPLES = {
 }
 
 DEFAULT_EXAMPLES = [
+    "binary_transform",
+    "fill_transform_replace_copy",
+    "for_each_transform",
     "four_transform",
     "iota_transform_replace_copy",
+    "replace_copy_if",
+    "replace_if",
     "three_transform",
+    "transform_replace_copy",
     "pointer",
 ]
 
@@ -94,9 +154,11 @@ def count_max_fused_stmt_count(schedule_text):
     return max_count
 
 
-def detect_offset_evidence(scops_text, debug_text):
+def detect_offset_evidence(scops_text, schedule_text, debug_text):
     return (
         "Logical Domain :=" in scops_text
+        or "-> [(1 + i0)]" in schedule_text
+        or "-> [(-1 + i0)]" in schedule_text
         or "Offset-aware fusion bonus" in debug_text
         or "Applying offset-aware outer schedule shift" in debug_text
     )
@@ -272,7 +334,9 @@ def evaluate(
         "optimized.ll": polly["optimized_ir"],
     }
 
-    offset_ok = detect_offset_evidence(artifacts["scops.txt"], artifacts["debug.txt"])
+    offset_ok = detect_offset_evidence(
+        artifacts["scops.txt"], artifacts["schedule.txt"], artifacts["debug.txt"]
+    )
     compaction_ok = detect_compaction_evidence(
         artifacts["scops.txt"], artifacts["debug.txt"]
     )

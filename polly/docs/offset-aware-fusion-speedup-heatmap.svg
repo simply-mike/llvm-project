@@ -1,0 +1,206 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1220" height="650" viewBox="0 0 1220 650">
+<rect width="100%" height="100%" fill="#fbfaf7"/>
+<style>text{font-family:Hoefler Text, Georgia, serif; fill:#24313f}.label{font-size:13px}.small{font-size:11px; fill:#53616f}.title{font-size:24px; font-weight:700}.subtitle{font-size:13px; fill:#53616f}.axis{stroke:#7c8794; stroke-width:1}.grid{stroke:#d8ddd8; stroke-width:1}.legend{font-size:11px}</style>
+<text class="title" x="80" y="48">Speedup heatmap</text>
+<text class="subtitle" x="80" y="72">Darker green means larger baseline/Polly speedup.</text>
+<text class="small" text-anchor="middle" x="290.0" y="75">4K</text>
+<text class="small" text-anchor="middle" x="380.0" y="75">8K</text>
+<text class="small" text-anchor="middle" x="470.0" y="75">16K</text>
+<text class="small" text-anchor="middle" x="560.0" y="75">32K</text>
+<text class="small" text-anchor="middle" x="650.0" y="75">64K</text>
+<text class="small" text-anchor="middle" x="740.0" y="75">128K</text>
+<text class="small" text-anchor="middle" x="830.0" y="75">256K</text>
+<text class="small" text-anchor="middle" x="920.0" y="75">512K</text>
+<text class="small" text-anchor="middle" x="1010.0" y="75">1M</text>
+<text class="small" text-anchor="end" x="233" y="121">binary_transform</text>
+<rect x="245" y="95" width="88" height="40" rx="7" fill="#bac199"/>
+<text text-anchor="middle" x="289.0" y="121" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.73x</text>
+<rect x="335" y="95" width="88" height="40" rx="7" fill="#bac199"/>
+<text text-anchor="middle" x="379.0" y="121" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.73x</text>
+<rect x="425" y="95" width="88" height="40" rx="7" fill="#cecba2"/>
+<text text-anchor="middle" x="469.0" y="121" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.47x</text>
+<rect x="515" y="95" width="88" height="40" rx="7" fill="#d1cda3"/>
+<text text-anchor="middle" x="559.0" y="121" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.43x</text>
+<rect x="605" y="95" width="88" height="40" rx="7" fill="#d5cea5"/>
+<text text-anchor="middle" x="649.0" y="121" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.39x</text>
+<rect x="695" y="95" width="88" height="40" rx="7" fill="#d6cfa5"/>
+<text text-anchor="middle" x="739.0" y="121" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.38x</text>
+<rect x="785" y="95" width="88" height="40" rx="7" fill="#d5cfa5"/>
+<text text-anchor="middle" x="829.0" y="121" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.38x</text>
+<rect x="875" y="95" width="88" height="40" rx="7" fill="#d6cfa5"/>
+<text text-anchor="middle" x="919.0" y="121" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.38x</text>
+<rect x="965" y="95" width="88" height="40" rx="7" fill="#d7cfa6"/>
+<text text-anchor="middle" x="1009.0" y="121" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.37x</text>
+<text class="small" text-anchor="end" x="233" y="163">fill_transform_replace_copy</text>
+<rect x="245" y="137" width="88" height="40" rx="7" fill="#c3c69d"/>
+<text text-anchor="middle" x="289.0" y="163" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.61x</text>
+<rect x="335" y="137" width="88" height="40" rx="7" fill="#d1cca3"/>
+<text text-anchor="middle" x="379.0" y="163" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.44x</text>
+<rect x="425" y="137" width="88" height="40" rx="7" fill="#d5cfa5"/>
+<text text-anchor="middle" x="469.0" y="163" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.39x</text>
+<rect x="515" y="137" width="88" height="40" rx="7" fill="#cfcca2"/>
+<text text-anchor="middle" x="559.0" y="163" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.46x</text>
+<rect x="605" y="137" width="88" height="40" rx="7" fill="#d0cca3"/>
+<text text-anchor="middle" x="649.0" y="163" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.45x</text>
+<rect x="695" y="137" width="88" height="40" rx="7" fill="#dcd2a8"/>
+<text text-anchor="middle" x="739.0" y="163" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.30x</text>
+<rect x="785" y="137" width="88" height="40" rx="7" fill="#ddd3a9"/>
+<text text-anchor="middle" x="829.0" y="163" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.29x</text>
+<rect x="875" y="137" width="88" height="40" rx="7" fill="#dfd3a9"/>
+<text text-anchor="middle" x="919.0" y="163" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.26x</text>
+<rect x="965" y="137" width="88" height="40" rx="7" fill="#e0d4aa"/>
+<text text-anchor="middle" x="1009.0" y="163" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.25x</text>
+<text class="small" text-anchor="end" x="233" y="205">four_transform</text>
+<rect x="245" y="179" width="88" height="40" rx="7" fill="#9fb48d"/>
+<text text-anchor="middle" x="289.0" y="205" font-size="12" fill="#ffffff" font-family="Hoefler Text, Georgia, serif">2.06x</text>
+<rect x="335" y="179" width="88" height="40" rx="7" fill="#a7b890"/>
+<text text-anchor="middle" x="379.0" y="205" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.97x</text>
+<rect x="425" y="179" width="88" height="40" rx="7" fill="#b8c098"/>
+<text text-anchor="middle" x="469.0" y="205" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.76x</text>
+<rect x="515" y="179" width="88" height="40" rx="7" fill="#bec39a"/>
+<text text-anchor="middle" x="559.0" y="205" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.68x</text>
+<rect x="605" y="179" width="88" height="40" rx="7" fill="#bac199"/>
+<text text-anchor="middle" x="649.0" y="205" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.72x</text>
+<rect x="695" y="179" width="88" height="40" rx="7" fill="#bbc199"/>
+<text text-anchor="middle" x="739.0" y="205" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.72x</text>
+<rect x="785" y="179" width="88" height="40" rx="7" fill="#bbc299"/>
+<text text-anchor="middle" x="829.0" y="205" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.71x</text>
+<rect x="875" y="179" width="88" height="40" rx="7" fill="#adbb93"/>
+<text text-anchor="middle" x="919.0" y="205" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.89x</text>
+<rect x="965" y="179" width="88" height="40" rx="7" fill="#97b089"/>
+<text text-anchor="middle" x="1009.0" y="205" font-size="12" fill="#ffffff" font-family="Hoefler Text, Georgia, serif">2.16x</text>
+<text class="small" text-anchor="end" x="233" y="247">for_each_transform</text>
+<rect x="245" y="221" width="88" height="40" rx="7" fill="#c9c99f"/>
+<text text-anchor="middle" x="289.0" y="247" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.54x</text>
+<rect x="335" y="221" width="88" height="40" rx="7" fill="#cecba2"/>
+<text text-anchor="middle" x="379.0" y="247" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.48x</text>
+<rect x="425" y="221" width="88" height="40" rx="7" fill="#d9d1a7"/>
+<text text-anchor="middle" x="469.0" y="247" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.34x</text>
+<rect x="515" y="221" width="88" height="40" rx="7" fill="#ded3a9"/>
+<text text-anchor="middle" x="559.0" y="247" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.28x</text>
+<rect x="605" y="221" width="88" height="40" rx="7" fill="#d6cfa6"/>
+<text text-anchor="middle" x="649.0" y="247" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.37x</text>
+<rect x="695" y="221" width="88" height="40" rx="7" fill="#dbd2a8"/>
+<text text-anchor="middle" x="739.0" y="247" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.31x</text>
+<rect x="785" y="221" width="88" height="40" rx="7" fill="#dad1a7"/>
+<text text-anchor="middle" x="829.0" y="247" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.32x</text>
+<rect x="875" y="221" width="88" height="40" rx="7" fill="#d3cda4"/>
+<text text-anchor="middle" x="919.0" y="247" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.42x</text>
+<rect x="965" y="221" width="88" height="40" rx="7" fill="#c8c89f"/>
+<text text-anchor="middle" x="1009.0" y="247" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.55x</text>
+<text class="small" text-anchor="end" x="233" y="289">iota_transform_replace_copy</text>
+<rect x="245" y="263" width="88" height="40" rx="7" fill="#a4b68f"/>
+<text text-anchor="middle" x="289.0" y="289" font-size="12" fill="#ffffff" font-family="Hoefler Text, Georgia, serif">2.00x</text>
+<rect x="335" y="263" width="88" height="40" rx="7" fill="#aebb93"/>
+<text text-anchor="middle" x="379.0" y="289" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.88x</text>
+<rect x="425" y="263" width="88" height="40" rx="7" fill="#c2c59c"/>
+<text text-anchor="middle" x="469.0" y="289" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.63x</text>
+<rect x="515" y="263" width="88" height="40" rx="7" fill="#abba92"/>
+<text text-anchor="middle" x="559.0" y="289" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.91x</text>
+<rect x="605" y="263" width="88" height="40" rx="7" fill="#b5bf97"/>
+<text text-anchor="middle" x="649.0" y="289" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.79x</text>
+<rect x="695" y="263" width="88" height="40" rx="7" fill="#adbb93"/>
+<text text-anchor="middle" x="739.0" y="289" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.89x</text>
+<rect x="785" y="263" width="88" height="40" rx="7" fill="#bec39b"/>
+<text text-anchor="middle" x="829.0" y="289" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.68x</text>
+<rect x="875" y="263" width="88" height="40" rx="7" fill="#c9c99f"/>
+<text text-anchor="middle" x="919.0" y="289" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.54x</text>
+<rect x="965" y="263" width="88" height="40" rx="7" fill="#d6cfa5"/>
+<text text-anchor="middle" x="1009.0" y="289" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.38x</text>
+<text class="small" text-anchor="end" x="233" y="331">three_transform</text>
+<rect x="245" y="305" width="88" height="40" rx="7" fill="#c8c89f"/>
+<text text-anchor="middle" x="289.0" y="331" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.56x</text>
+<rect x="335" y="305" width="88" height="40" rx="7" fill="#cdcba2"/>
+<text text-anchor="middle" x="379.0" y="331" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.48x</text>
+<rect x="425" y="305" width="88" height="40" rx="7" fill="#d9d1a7"/>
+<text text-anchor="middle" x="469.0" y="331" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.33x</text>
+<rect x="515" y="305" width="88" height="40" rx="7" fill="#dfd4a9"/>
+<text text-anchor="middle" x="559.0" y="331" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.26x</text>
+<rect x="605" y="305" width="88" height="40" rx="7" fill="#d9d1a7"/>
+<text text-anchor="middle" x="649.0" y="331" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.34x</text>
+<rect x="695" y="305" width="88" height="40" rx="7" fill="#dcd2a8"/>
+<text text-anchor="middle" x="739.0" y="331" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.30x</text>
+<rect x="785" y="305" width="88" height="40" rx="7" fill="#dad1a7"/>
+<text text-anchor="middle" x="829.0" y="331" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.33x</text>
+<rect x="875" y="305" width="88" height="40" rx="7" fill="#d2cda4"/>
+<text text-anchor="middle" x="919.0" y="331" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.42x</text>
+<rect x="965" y="305" width="88" height="40" rx="7" fill="#d4cea4"/>
+<text text-anchor="middle" x="1009.0" y="331" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.41x</text>
+<text class="small" text-anchor="end" x="233" y="373">pointer</text>
+<rect x="245" y="347" width="88" height="40" rx="7" fill="#c7c89f"/>
+<text text-anchor="middle" x="289.0" y="373" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.56x</text>
+<rect x="335" y="347" width="88" height="40" rx="7" fill="#d1cca3"/>
+<text text-anchor="middle" x="379.0" y="373" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.44x</text>
+<rect x="425" y="347" width="88" height="40" rx="7" fill="#d6cfa5"/>
+<text text-anchor="middle" x="469.0" y="373" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.38x</text>
+<rect x="515" y="347" width="88" height="40" rx="7" fill="#d0cca3"/>
+<text text-anchor="middle" x="559.0" y="373" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.45x</text>
+<rect x="605" y="347" width="88" height="40" rx="7" fill="#d5cfa5"/>
+<text text-anchor="middle" x="649.0" y="373" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.39x</text>
+<rect x="695" y="347" width="88" height="40" rx="7" fill="#d8d0a6"/>
+<text text-anchor="middle" x="739.0" y="373" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.36x</text>
+<rect x="785" y="347" width="88" height="40" rx="7" fill="#d9d1a7"/>
+<text text-anchor="middle" x="829.0" y="373" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.34x</text>
+<rect x="875" y="347" width="88" height="40" rx="7" fill="#dfd3a9"/>
+<text text-anchor="middle" x="919.0" y="373" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.27x</text>
+<rect x="965" y="347" width="88" height="40" rx="7" fill="#d9d0a7"/>
+<text text-anchor="middle" x="1009.0" y="373" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.34x</text>
+<text class="small" text-anchor="end" x="233" y="415">replace_copy_if</text>
+<rect x="245" y="389" width="88" height="40" rx="7" fill="#b0bc94"/>
+<text text-anchor="middle" x="289.0" y="415" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.85x</text>
+<rect x="335" y="389" width="88" height="40" rx="7" fill="#b3be96"/>
+<text text-anchor="middle" x="379.0" y="415" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.81x</text>
+<rect x="425" y="389" width="88" height="40" rx="7" fill="#c9c99f"/>
+<text text-anchor="middle" x="469.0" y="415" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.54x</text>
+<rect x="515" y="389" width="88" height="40" rx="7" fill="#d3cea4"/>
+<text text-anchor="middle" x="559.0" y="415" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.41x</text>
+<rect x="605" y="389" width="88" height="40" rx="7" fill="#d9d1a7"/>
+<text text-anchor="middle" x="649.0" y="415" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.34x</text>
+<rect x="695" y="389" width="88" height="40" rx="7" fill="#d6cfa6"/>
+<text text-anchor="middle" x="739.0" y="415" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.37x</text>
+<rect x="785" y="389" width="88" height="40" rx="7" fill="#dad1a7"/>
+<text text-anchor="middle" x="829.0" y="415" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.33x</text>
+<rect x="875" y="389" width="88" height="40" rx="7" fill="#d6cfa6"/>
+<text text-anchor="middle" x="919.0" y="415" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.37x</text>
+<rect x="965" y="389" width="88" height="40" rx="7" fill="#c4c69d"/>
+<text text-anchor="middle" x="1009.0" y="415" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.61x</text>
+<text class="small" text-anchor="end" x="233" y="457">replace_if</text>
+<rect x="245" y="431" width="88" height="40" rx="7" fill="#759f7a"/>
+<text text-anchor="middle" x="289.0" y="457" font-size="12" fill="#ffffff" font-family="Hoefler Text, Georgia, serif">2.59x</text>
+<rect x="335" y="431" width="88" height="40" rx="7" fill="#7aa17c"/>
+<text text-anchor="middle" x="379.0" y="457" font-size="12" fill="#ffffff" font-family="Hoefler Text, Georgia, serif">2.53x</text>
+<rect x="425" y="431" width="88" height="40" rx="7" fill="#8fac85"/>
+<text text-anchor="middle" x="469.0" y="457" font-size="12" fill="#ffffff" font-family="Hoefler Text, Georgia, serif">2.27x</text>
+<rect x="515" y="431" width="88" height="40" rx="7" fill="#97b089"/>
+<text text-anchor="middle" x="559.0" y="457" font-size="12" fill="#ffffff" font-family="Hoefler Text, Georgia, serif">2.17x</text>
+<rect x="605" y="431" width="88" height="40" rx="7" fill="#9ab18a"/>
+<text text-anchor="middle" x="649.0" y="457" font-size="12" fill="#ffffff" font-family="Hoefler Text, Georgia, serif">2.12x</text>
+<rect x="695" y="431" width="88" height="40" rx="7" fill="#9fb48c"/>
+<text text-anchor="middle" x="739.0" y="457" font-size="12" fill="#ffffff" font-family="Hoefler Text, Georgia, serif">2.07x</text>
+<rect x="785" y="431" width="88" height="40" rx="7" fill="#9eb38c"/>
+<text text-anchor="middle" x="829.0" y="457" font-size="12" fill="#ffffff" font-family="Hoefler Text, Georgia, serif">2.08x</text>
+<rect x="875" y="431" width="88" height="40" rx="7" fill="#a0b48d"/>
+<text text-anchor="middle" x="919.0" y="457" font-size="12" fill="#ffffff" font-family="Hoefler Text, Georgia, serif">2.05x</text>
+<rect x="965" y="431" width="88" height="40" rx="7" fill="#98b089"/>
+<text text-anchor="middle" x="1009.0" y="457" font-size="12" fill="#ffffff" font-family="Hoefler Text, Georgia, serif">2.16x</text>
+<text class="small" text-anchor="end" x="233" y="499">transform_replace_copy</text>
+<rect x="245" y="473" width="88" height="40" rx="7" fill="#c7c79e"/>
+<text text-anchor="middle" x="289.0" y="499" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.57x</text>
+<rect x="335" y="473" width="88" height="40" rx="7" fill="#cbcaa0"/>
+<text text-anchor="middle" x="379.0" y="499" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.51x</text>
+<rect x="425" y="473" width="88" height="40" rx="7" fill="#d7d0a6"/>
+<text text-anchor="middle" x="469.0" y="499" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.36x</text>
+<rect x="515" y="473" width="88" height="40" rx="7" fill="#dfd3a9"/>
+<text text-anchor="middle" x="559.0" y="499" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.27x</text>
+<rect x="605" y="473" width="88" height="40" rx="7" fill="#d7d0a6"/>
+<text text-anchor="middle" x="649.0" y="499" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.36x</text>
+<rect x="695" y="473" width="88" height="40" rx="7" fill="#dbd1a8"/>
+<text text-anchor="middle" x="739.0" y="499" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.32x</text>
+<rect x="785" y="473" width="88" height="40" rx="7" fill="#dbd2a8"/>
+<text text-anchor="middle" x="829.0" y="499" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.31x</text>
+<rect x="875" y="473" width="88" height="40" rx="7" fill="#d4cea5"/>
+<text text-anchor="middle" x="919.0" y="499" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.40x</text>
+<rect x="965" y="473" width="88" height="40" rx="7" fill="#cfcba2"/>
+<text text-anchor="middle" x="1009.0" y="499" font-size="12" fill="#24313f" font-family="Hoefler Text, Georgia, serif">1.47x</text>
+<text class="label" text-anchor="middle" x="650.0" y="605">Problem size N</text>
+</svg>

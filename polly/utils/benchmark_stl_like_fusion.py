@@ -14,11 +14,29 @@ INPUTS = ROOT / "test" / "Inputs"
 
 
 CASES = {
+    "binary_transform": {
+        "source": INPUTS / "stl_like_offset_binary_transform.cpp",
+        "symbol": "stl_like_offset_binary_transform",
+        "kind": "two_buffer",
+        "min_fused_stmts": 2,
+    },
+    "fill_transform_replace_copy": {
+        "source": INPUTS / "stl_like_offset_fill_transform_replace_copy.cpp",
+        "symbol": "stl_like_offset_fill_transform_replace_copy",
+        "kind": "two_buffer",
+        "min_fused_stmts": 3,
+    },
     "four_transform": {
         "source": INPUTS / "stl_like_offset_four_transform.cpp",
         "symbol": "stl_like_offset_four_transform",
         "kind": "two_buffer",
         "min_fused_stmts": 4,
+    },
+    "for_each_transform": {
+        "source": INPUTS / "stl_like_offset_for_each_transform.cpp",
+        "symbol": "stl_like_offset_for_each_transform",
+        "kind": "two_buffer",
+        "min_fused_stmts": 3,
     },
     "iota_transform_replace_copy": {
         "source": INPUTS / "stl_like_offset_iota_transform_replace_copy.cpp",
@@ -38,6 +56,24 @@ CASES = {
         "kind": "two_buffer",
         "min_fused_stmts": 2,
     },
+    "replace_copy_if": {
+        "source": INPUTS / "stl_like_offset_replace_copy_if.cpp",
+        "symbol": "stl_like_offset_replace_copy_if",
+        "kind": "two_buffer",
+        "min_fused_stmts": 3,
+    },
+    "replace_if": {
+        "source": INPUTS / "stl_like_offset_replace_if.cpp",
+        "symbol": "stl_like_offset_replace_if",
+        "kind": "two_buffer",
+        "min_fused_stmts": 3,
+    },
+    "transform_replace_copy": {
+        "source": INPUTS / "stl_like_offset_transform_replace_copy.cpp",
+        "symbol": "stl_like_offset_transform_replace_copy",
+        "kind": "two_buffer",
+        "min_fused_stmts": 3,
+    },
 }
 
 FRONTEND_FLAGS = [
@@ -48,6 +84,7 @@ FRONTEND_FLAGS = [
     "-fno-exceptions",
     "-fno-rtti",
     "-fno-discard-value-names",
+    "-fno-builtin",
     "-fno-vectorize",
     "-fno-slp-vectorize",
     "-fno-unroll-loops",
@@ -496,7 +533,7 @@ def build_case(args, case_name, case, root):
     exe = case_dir / "bench"
 
     compile_to_ir(
-        args.clangxx,
+        args.frontend_clangxx,
         case["source"],
         case["symbol"],
         f"baseline_{case['symbol']}",
@@ -504,7 +541,7 @@ def build_case(args, case_name, case, root):
         args.cxxflag,
     )
     compile_to_ir(
-        args.clangxx,
+        args.frontend_clangxx,
         case["source"],
         case["symbol"],
         f"polly_{case['symbol']}",
@@ -514,15 +551,15 @@ def build_case(args, case_name, case, root):
     optimize_baseline(args.opt, baseline_input, baseline_ll)
     optimize_polly(args, polly_input, schedule_txt, polly_codegen_ll, polly_final_ll)
 
-    compile_object(args.clangxx, baseline_ll, baseline_obj, args.cxxflag)
-    compile_object(args.clangxx, polly_final_ll, polly_obj, args.cxxflag)
-    compile_asm(args.clangxx, baseline_ll, baseline_asm, args.cxxflag)
-    compile_asm(args.clangxx, polly_final_ll, polly_asm, args.cxxflag)
+    compile_object(args.native_clangxx, baseline_ll, baseline_obj, args.cxxflag)
+    compile_object(args.native_clangxx, polly_final_ll, polly_obj, args.cxxflag)
+    compile_asm(args.native_clangxx, baseline_ll, baseline_asm, args.cxxflag)
+    compile_asm(args.native_clangxx, polly_final_ll, polly_asm, args.cxxflag)
 
     driver_cpp.write_text(driver_source(case), encoding="utf-8")
     run_cmd(
         [
-            args.clangxx,
+            args.native_clangxx,
             "-std=c++20",
             "-O2",
             *args.cxxflag,
@@ -534,7 +571,7 @@ def build_case(args, case_name, case, root):
     )
     run_cmd(
         [
-            args.clangxx,
+            args.native_clangxx,
             "-O2",
             *args.cxxflag,
             str(driver_obj),
@@ -607,6 +644,22 @@ def main():
         )
     )
     parser.add_argument("--clangxx", default=shutil.which("clang++") or "clang++")
+    parser.add_argument(
+        "--frontend-clangxx",
+        default="",
+        help=(
+            "Compiler used only for C++ source to LLVM IR. Defaults to "
+            "--clangxx."
+        ),
+    )
+    parser.add_argument(
+        "--native-clangxx",
+        default="",
+        help=(
+            "Compiler used for native objects, assembly, driver, and linking. "
+            "Defaults to --clangxx."
+        ),
+    )
     parser.add_argument("--opt", default=shutil.which("opt") or "opt")
     parser.add_argument(
         "--case",
@@ -653,6 +706,10 @@ def main():
         help="Extra flag passed to clang++ for all compile/link steps.",
     )
     args = parser.parse_args()
+    if not args.frontend_clangxx:
+        args.frontend_clangxx = args.clangxx
+    if not args.native_clangxx:
+        args.native_clangxx = args.clangxx
 
     sizes = args.size or [1024, 16384, 262144]
     selected = CASES.keys() if args.case == "all" else [args.case]
